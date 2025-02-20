@@ -1,0 +1,11 @@
+# Ignore JSON files
+*.json
+
+# Ignore JSONL files
+*.jsonl
+
+# Ignore shell scripts
+*.sh
+
+# Ignore __pycache__ directories
+__pycache__/
