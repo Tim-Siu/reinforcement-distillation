@@ -9,3 +9,15 @@
 
 # Ignore __pycache__ directories
 __pycache__/
+
+experiments/checkpoints/*
+
+experiments/data
+
+experiments/dataset
+
+experiments/raw
+
+experiments/wandb
+
+experiments/outputs
