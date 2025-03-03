@@ -7,6 +7,12 @@
 # Ignore shell scripts
 *.sh
 
+# Ignore log
+*.log
+
+# Ignore export from Jupyter Notebook
+*.html
+
 # Ignore __pycache__ directories
 __pycache__/
 
