@@ -68,6 +68,10 @@ logger = logging.getLogger(__name__)
 
 
 def main(script_args, training_args, model_args):
+
+    # Set dataset_kwargs to skip default SFTTrainer preparation
+    # We will handle tokenization, filtering, and applying chat template manually.
+    training_args.dataset_kwargs = {"skip_prepare_dataset": True}
     # Set seed for reproducibility
     set_seed(training_args.seed)
 
@@ -101,19 +105,120 @@ def main(script_args, training_args, model_args):
         init_wandb_training(training_args)
 
     ################
-    # Load datasets
-    ################
-    if script_args.dataset_path:
-        dataset = load_from_disk(script_args.dataset_path)
-    else:
-        dataset = load_dataset(script_args.dataset_name, name=script_args.dataset_config)
-
-    ################
     # Load tokenizer
     ################
     tokenizer = get_tokenizer(model_args, training_args)
     if not tokenizer.pad_token:
         tokenizer.pad_token = tokenizer.eos_token
+
+    #################
+    # Load datasets
+    #################
+    max_seq_length = int(training_args.max_length)
+
+    if script_args.dataset_path:
+        raw_dataset = load_from_disk(script_args.dataset_path)
+    else:
+        raw_dataset = load_dataset(script_args.dataset_name, name=script_args.dataset_config)
+    
+    train_split = script_args.dataset_train_split
+    eval_split = script_args.dataset_test_split
+
+    # --- Preprocessing Function ---
+    def preprocess_data(examples):
+        # 1. Apply chat template
+        templated_texts = tokenizer.apply_chat_template(
+            examples['messages'], # Assumes 'messages' column
+            tokenize=False,
+            add_generation_prompt=False
+        )
+
+        # 2. Tokenize based on strategy
+        strategy = training_args.long_sequence_strategy
+        if strategy == "truncate":
+            # Tokenize and truncate
+            tokenized_outputs = tokenizer(
+                templated_texts,
+                truncation=True,
+                max_length=max_seq_length,
+                padding=False, # Collator will handle padding
+            )
+            final_outputs = tokenized_outputs
+
+        elif strategy == "filter":
+            # Tokenize without truncation first
+            tokenized_outputs = tokenizer(
+                templated_texts,
+                truncation=False, # Important for filtering
+                padding=False,
+            )
+
+            # Filter based on tokenized length
+            valid_indices = [
+                i for i, ids in enumerate(tokenized_outputs['input_ids'])
+                if len(ids) <= max_seq_length
+            ]
+
+            # Keep only valid examples
+            final_outputs = {}
+            if valid_indices: # Check if any examples are left
+                for key in tokenized_outputs:
+                    final_outputs[key] = [tokenized_outputs[key][i] for i in valid_indices]
+            else: # Handle the case where a whole batch gets filtered out
+                 # Return an empty dict with the expected structure to avoid map errors
+                for key in tokenized_outputs:
+                    final_outputs[key] = []
+
+        else: # Should not happen due to validation in SFTConfig
+            raise ValueError(f"Invalid long_sequence_strategy: {strategy}")
+
+
+        # 3. Append EOS token if necessary (after potential truncation/filtering)
+        eos_token_id = tokenizer.eos_token_id
+        if eos_token_id is not None and "input_ids" in final_outputs and final_outputs["input_ids"]:
+             for i in range(len(final_outputs["input_ids"])):
+                 # Check if EOS is already the last token
+                 if not final_outputs["input_ids"][i] or final_outputs["input_ids"][i][-1] != eos_token_id:
+                      # Append only if sequence is not empty and EOS is missing
+                      final_outputs["input_ids"][i].append(eos_token_id)
+                      if "attention_mask" in final_outputs:
+                          final_outputs["attention_mask"][i].append(1)
+
+        return final_outputs
+
+    # Determine columns to remove
+    remove_columns = list(raw_dataset[train_split].column_names)
+
+    # --- Apply Preprocessing ---
+    logger.info(f"Preprocessing train dataset with strategy: '{training_args.long_sequence_strategy}', max_length={max_seq_length}...")
+    train_dataset = raw_dataset[train_split].map(
+        preprocess_data,
+        batched=True,
+        num_proc=os.cpu_count(),
+        remove_columns=remove_columns,
+        desc=f"Preprocessing {train_split} ({training_args.long_sequence_strategy})",
+    )
+    logger.info(f"Train dataset size after preprocessing: {len(train_dataset)}")
+    if len(train_dataset) == 0:
+         logger.error("Training dataset is empty after preprocessing! Check data or filtering criteria.")
+         # Depending on desired behavior, you might want to sys.exit(1) here
+
+
+    eval_dataset = None
+    if training_args.do_eval and eval_split in raw_dataset:
+        logger.info(f"Preprocessing evaluation dataset with strategy: '{training_args.long_sequence_strategy}', max_length={max_seq_length}...")
+        eval_dataset = raw_dataset[eval_split].map(
+            preprocess_data,
+            batched=True,
+            num_proc=os.cpu_count(),
+            remove_columns=remove_columns,
+            desc=f"Preprocessing {eval_split} ({training_args.long_sequence_strategy})",
+        )
+        logger.info(f"Eval dataset size after preprocessing: {len(eval_dataset)}")
+        if len(eval_dataset) == 0:
+             logger.warning(f"Evaluation dataset '{eval_split}' is empty after preprocessing. Disabling evaluation.")
+             training_args.do_eval = False # Disable eval if dataset is empty
+             eval_dataset = None
 
     ###################
     # Model init kwargs
@@ -134,14 +239,24 @@ def main(script_args, training_args, model_args):
     )
     training_args.model_init_kwargs = model_kwargs
 
+    #######################
+    # Instantiate Collator
+    #######################
+    data_collator = DataCollatorForCompletionOnlyLM(
+        tokenizer=tokenizer,
+        response_template=RESPONSE_TEMPLATE,
+        instruction_template=INSTRUCTION_TEMPLATE,
+        mlm=False, # Ensure causal LM objective
+    )
+
     ############################
     # Initialize the SFT Trainer
     ############################
     trainer = SFTTrainer(
         model=model_args.model_name_or_path,
         args=training_args,
-        train_dataset=dataset[script_args.dataset_train_split],
-        eval_dataset=dataset[script_args.dataset_test_split] if training_args.eval_strategy != "no" else None,
+        train_dataset=train_dataset,
+        eval_dataset=eval_dataset if training_args.do_eval else None,
         processing_class=tokenizer,
         peft_config=get_peft_config(model_args),
         callbacks=get_callbacks(training_args, model_args),
@@ -158,8 +273,15 @@ def main(script_args, training_args, model_args):
         checkpoint = last_checkpoint
     train_result = trainer.train(resume_from_checkpoint=checkpoint)
     metrics = train_result.metrics
-    metrics["train_samples"] = len(dataset[script_args.dataset_train_split])
-    trainer.log_metrics("train", metrics)
+
+    metrics["raw_train_samples"] = len(raw_dataset[train_split])
+    # Need to recalculate train samples if dataset changed size
+    try:
+      metrics["train_samples"] = len(train_dataset)
+    except TypeError: # Handle IterableDataset
+      logger.info("Cannot determine exact train samples for IterableDataset.")
+      metrics["train_samples"] = -1 # Placeholder    trainer.log_metrics("train", metrics)
+
     trainer.save_metrics("train", metrics)
     trainer.save_state()
 
@@ -187,8 +309,12 @@ def main(script_args, training_args, model_args):
     if training_args.do_eval:
         logger.info("*** Evaluate ***")
         metrics = trainer.evaluate()
-        metrics["eval_samples"] = len(dataset[script_args.dataset_test_split])
-        trainer.log_metrics("eval", metrics)
+        metrics["raw_eval_samples"] = len(raw_dataset[eval_split])
+        try:
+           metrics["eval_samples"] = len(eval_dataset)
+        except TypeError:
+           logger.info("Cannot determine exact eval samples for IterableDataset.")
+           metrics["eval_samples"] = -1 # Placeholder
         trainer.save_metrics("eval", metrics)
 
     #############

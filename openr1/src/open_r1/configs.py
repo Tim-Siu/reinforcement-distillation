@@ -83,7 +83,13 @@ class SFTConfig(trl.SFTConfig):
         default=None,
         metadata={"help": ("The project to store runs under.")},
     )
-
+    # --- NEW ARGUMENT ---
+    long_sequence_strategy: str = field(
+        default="truncate", # Default to truncation
+        metadata={
+            "help": "Strategy for handling sequences longer than max_seq_length during preprocessing. Options: 'truncate', 'filter'."
+        },
+    )
 
 @dataclass
 class GRPOScriptArguments(trl.ScriptArguments):
