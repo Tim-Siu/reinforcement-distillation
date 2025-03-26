@@ -51,6 +51,12 @@ class ScriptArguments:
     """
 
     dataset_name: str = field(metadata={"help": "Dataset name."})
+    dataset_path: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Path to local dataset. If provided, we use `load_from_disk` instead of `load_dataset`."
+        },
+    )
     dataset_config: Optional[str] = field(
         default=None,
         metadata={
