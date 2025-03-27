@@ -101,8 +101,8 @@ from trl import (
     DataCollatorForCompletionOnlyLM
 )
 
-INSTRUCTION_TEMPLATE = "<|im_start|>user\n" # Example
-RESPONSE_TEMPLATE = "<|im_end|>\n<|im_start|>assistant\n"
+INSTRUCTION_TEMPLATE = None
+RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
 
 logger = logging.getLogger(__name__)
 
@@ -188,8 +188,7 @@ def main(script_args, training_args: SFTConfig, model_args):
         logger.info("Using 'filter' strategy: Custom preprocessing, custom DataCollatorForCompletionOnlyLM.")
     elif strategy == "padding_free":
         # SFTTrainer preprocessing, SFTTrainer padding_free collator
-        training_args.dataset_kwargs = {"skip_prepare_dataset": False}
-        training_args.padding_free = True # Enable SFTTrainer's padding_free
+        # training_args.dataset_kwargs = {"skip_prepare_dataset": False}
         logger.info("Using 'padding_free' strategy: SFTTrainer preprocessing, SFTTrainer padding_free (DataCollatorWithFlattening).")
         # Warn if packing is also enabled (can be valid but needs attention)
         if training_args.packing:
@@ -206,7 +205,6 @@ def main(script_args, training_args: SFTConfig, model_args):
     else: # strategy == "truncate"
         # SFTTrainer preprocessing, custom collator
         training_args.dataset_kwargs = {"skip_prepare_dataset": False}
-        training_args.padding_free = False # Cannot use custom collator with padding_free=True
         logger.info("Using 'truncate' strategy: SFTTrainer preprocessing, custom DataCollatorForCompletionOnlyLM.")
 
     # Set seed for reproducibility
@@ -355,7 +353,6 @@ def main(script_args, training_args: SFTConfig, model_args):
         instruction_template=INSTRUCTION_TEMPLATE,
         mlm=False,
     )
-
 
     # --- Initialize the SFT Trainer (Corrected) ---
     logger.info(f"*** Initializing SFTTrainer (strategy: {strategy}) ***")
