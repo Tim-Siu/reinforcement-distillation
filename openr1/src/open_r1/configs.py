@@ -85,10 +85,43 @@ class SFTConfig(trl.SFTConfig):
     )
     # --- NEW ARGUMENT ---
     long_sequence_strategy: str = field(
-        default="truncate", # Default to truncation
+        default="truncate",
         metadata={
-            "help": "Strategy for handling sequences longer than max_seq_length during preprocessing. Options: 'truncate', 'filter'."
+            "help": "Strategy for handling long sequences: 'truncate', 'filter', or 'padding_free'.",
+            "choices": ["truncate", "filter", "padding_free"],
         },
+    )
+
+@dataclass
+class DPOConfig(trl.DPOConfig):
+    """
+    args for callbacks, benchmarks etc
+    """
+
+    benchmarks: list[str] = field(
+        default_factory=lambda: [], metadata={"help": "The benchmarks to run after training."}
+    )
+    callbacks: list[str] = field(
+        default_factory=lambda: [], metadata={"help": "The callbacks to run during training."}
+    )
+    chat_template: Optional[str] = field(default=None, metadata={"help": "The chat template to use."})
+    system_prompt: Optional[str] = field(
+        default=None,
+        metadata={"help": "The optional system prompt to use for benchmarking."},
+    )
+    hub_model_revision: Optional[str] = field(
+        default="main",
+        metadata={"help": "The Hub model branch to push the model to."},
+    )
+    overwrite_hub_revision: bool = field(default=False, metadata={"help": "Whether to overwrite the Hub revision."})
+    push_to_hub_revision: bool = field(default=False, metadata={"help": "Whether to push to a Hub revision/branch."})
+    wandb_entity: Optional[str] = field(
+        default=None,
+        metadata={"help": ("The entity to store runs under.")},
+    )
+    wandb_project: Optional[str] = field(
+        default=None,
+        metadata={"help": ("The project to store runs under.")},
     )
 
 @dataclass
