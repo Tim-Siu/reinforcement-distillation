@@ -1329,6 +1329,16 @@ class DPOTrainer(Trainer):
         metrics[f"{prefix}logits/rejected"] = (
             self.accelerator.gather_for_metrics(model_output["mean_rejected_logits"]).detach().mean().item()
         )
+        # ADDED: Compute normalized logps per token.
+        # Use the attention masks to get the true (unpadded) sequence lengths.
+        chosen_lengths = batch["chosen_attention_mask"].sum(dim=1).float()  # shape: (batch_size,)
+        rejected_lengths = batch["rejected_attention_mask"].sum(dim=1).float()  # shape: (batch_size,)
+        normalized_chosen_logps = model_output["chosen_logps"] / chosen_lengths
+        normalized_rejected_logps = model_output["rejected_logps"] / rejected_lengths
+        metrics[f"{prefix}logps/chosen_normalized"] = self.accelerator.gather_for_metrics(normalized_chosen_logps).detach().mean().item()
+        metrics[f"{prefix}logps/rejected_normalized"] = self.accelerator.gather_for_metrics(normalized_rejected_logps).detach().mean().item()
+        metrics[f"{prefix}lengths/chosen"] = chosen_lengths.mean().item()
+        metrics[f"{prefix}lengths/rejected"] = rejected_lengths.mean().item()
         if self.args.rpo_alpha is not None:
             metrics[f"{prefix}nll_loss"] = (
                 self.accelerator.gather_for_metrics(model_output["nll_loss"]).detach().mean().item()
