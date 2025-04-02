@@ -15,17 +15,28 @@
 """Custom evaluation tasks for LightEval."""
 
 import random
+import numpy as np
+
+from typing import Callable
 
 from lighteval.metrics.dynamic_metrics import (
     ExprExtractionConfig,
     IndicesExtractionConfig,
     LatexExtractionConfig,
+    compare_gold_target,
+    extract_target_from_pred,
+    get_extraction_regexes,
     multilingual_extractive_match_metric,
 )
 from lighteval.tasks.lighteval_task import LightevalTaskConfig
 from lighteval.tasks.requests import Doc
 from lighteval.utils.language import Language
-
+from lighteval.metrics.metrics_sample import PassAtK
+from lighteval.metrics.utils.metric_utils import (
+    MetricCategory,
+    MetricUseCase,
+    SampleLevelMetric,
+)
 
 # Prompt template adapted from
 # - simple-evals: https://github.com/openai/simple-evals/blob/6e84f4e2aed6b60f6a0c7b8f06bbbf4bfde72e58/math_eval.py#L17
@@ -69,12 +80,22 @@ expr_gold_metric = multilingual_extractive_match_metric(
     aggregation_function=max,
 )
 
-gpqa_metric = multilingual_extractive_match_metric(
-    language=Language.ENGLISH,
-    gold_extraction_target=[IndicesExtractionConfig(prefix_for_extraction="NativeLetters")],
-    pred_extraction_target=[IndicesExtractionConfig(prefix_for_extraction="NativeLetters")],
-    precision=5,
-)
+# gpqa_metric = multilingual_extractive_match_metric(
+#     language=Language.ENGLISH,
+#     gold_extraction_target=[IndicesExtractionConfig(prefix_for_extraction="NativeLetters")],
+#     pred_extraction_target=[IndicesExtractionConfig(prefix_for_extraction="NativeLetters")],
+#     precision=5,
+# )    
+# Metric for GPQA standard accuracy (using multilingual_extractive_match_metric)
+gpqa_metric_config = {
+    "language": Language.ENGLISH,
+    "gold_extraction_target": [IndicesExtractionConfig(prefix_for_extraction="NativeLetters")],
+    "pred_extraction_target": [IndicesExtractionConfig(prefix_for_extraction="NativeLetters")],
+    "fallback_mode": "first_match", # Use fallback for robustness
+    "extraction_mode": "any_match",
+    "precision": 5, # Not used for indices but kept for consistency
+}
+gpqa_metric = multilingual_extractive_match_metric(**gpqa_metric_config)
 
 
 def math_prompt_fn(line, task_name: str = None):
@@ -110,6 +131,135 @@ def gpqa_prompt_fn(line, task_name: str = None):
         instruction=query,
     )
 
+math_pass_at_1_4n = SampleLevelMetric(
+    metric_name="math_pass@1:4_samples",
+    sample_level_fn=PassAtK(
+        k=1,
+        n=4,
+        strip_strings=True,
+        # Extracting mathematical expressions and latex expressions
+        normalize_gold=lambda k: extract_target_from_pred(
+            k,
+            get_extraction_regexes(
+                formatted_doc=None,
+                target_types=[ExprExtractionConfig(), LatexExtractionConfig()],
+                language=Language.ENGLISH,
+            ),
+        ),
+        # Extracting mathematical expressions and latex expressions
+        normalize_pred=lambda k: extract_target_from_pred(
+            k,
+            get_extraction_regexes(
+                formatted_doc=None,
+                target_types=[ExprExtractionConfig(), LatexExtractionConfig()],
+                language=Language.ENGLISH,
+            ),
+        ),
+        # Uses sympy for comparision
+        sample_scoring_function=compare_gold_target,
+    ).compute,
+    category=MetricCategory.GENERATIVE_SAMPLING,
+    use_case=MetricUseCase.REASONING,
+    corpus_level_fn=np.mean,
+    higher_is_better=True,
+)
+
+def create_gpqa_pass_at_k_fn(k: int, n: int) -> Callable[[list[str], list[str], Doc], float]:
+    """Creates a sample_level_fn that calculates pass@k for GPQA using dynamic extraction."""
+
+    language = gpqa_metric_config["language"]
+    gold_extraction_target = gpqa_metric_config["gold_extraction_target"]
+    pred_extraction_target = gpqa_metric_config["pred_extraction_target"]
+    fallback_mode = gpqa_metric_config["fallback_mode"]
+    extraction_mode = gpqa_metric_config["extraction_mode"]
+    timeout_seconds = 5 # Or get from config if needed
+
+    def compute_pass_at_k(golds: list[str], predictions: list[str], formatted_doc: Doc) -> float:
+        """
+        Computes Pass@k score for a single sample.
+        Leverages formatted_doc to generate correct extraction regexes.
+        """
+        if not golds:
+            # logger.error("Received empty golds list for Pass@k computation.")
+            return 0.0
+        if not predictions:
+            # If no predictions are generated (e.g., model error), score is 0
+            return 0.0
+
+        # 1. Get extraction regexes *using* formatted_doc (THIS IS THE KEY DIFFERENCE)
+        # We can reuse the same config as the standard gpqa_metric
+        gold_extraction_regexes = get_extraction_regexes(formatted_doc, gold_extraction_target, language)
+        pred_extraction_regexes = get_extraction_regexes(formatted_doc, pred_extraction_target, language)
+
+        # 2. Extract the gold answer(s)
+        # For GPQA, there's usually only one gold standard letter
+        extracted_golds = extract_target_from_pred(
+            golds[0], gold_extraction_regexes, fallback_mode, extraction_mode, timeout_seconds
+        )
+
+        if not extracted_golds:
+            # If gold couldn't be extracted (e.g., malformed gold entry), log and score 0
+            # logger.warning(f"Could not extract gold target from '{golds[0]}' for doc_id {formatted_doc.doc_id if hasattr(formatted_doc, 'doc_id') else 'unknown'}")
+            # Optionally add extracted info to specifics
+            if formatted_doc.specific is None: formatted_doc.specific = {}
+            formatted_doc.specific["extracted_golds"] = []
+            formatted_doc.specific["extracted_predictions"] = ["GOLD_EXTRACTION_FAILED"] * len(predictions)
+            return 0.0
+
+        # Take the first successfully extracted gold (should be 'A', 'B', 'C', or 'D')
+        target_gold = extracted_golds[0]
+
+        # Store extracted info for debugging/analysis if needed
+        all_extracted_preds_str = []
+
+        # 3. Check the first n predictions
+        num_correct = 0
+        for i, pred_text in enumerate(predictions[:n]):
+            if not isinstance(pred_text, str): # Handle potential None or other types
+                 all_extracted_preds_str.append("INVALID_PRED_TYPE")
+                 continue
+
+            extracted_preds = extract_target_from_pred(
+                pred_text, pred_extraction_regexes, fallback_mode, extraction_mode, timeout_seconds
+            )
+
+            if extracted_preds:
+                # Take the first successfully extracted prediction
+                target_pred = extracted_preds[0]
+                all_extracted_preds_str.append(str(target_pred)) # Store extracted value
+
+                # 4. Compare using the same logic as multilingual_extractive_match_metric (simple equality for indices)
+                # compare_gold_target handles indices correctly (checks for equality)
+                is_correct = compare_gold_target(target_gold, target_pred, precision=0, timeout_seconds=timeout_seconds)
+                if is_correct:
+                    num_correct += 1
+            else:
+                 all_extracted_preds_str.append("PRED_EXTRACTION_FAILED")
+
+
+        # Add extracted info to specifics
+        if formatted_doc.specific is None: formatted_doc.specific = {}
+        formatted_doc.specific["extracted_golds"] = [str(target_gold)]
+        formatted_doc.specific["extracted_predictions_passk"] = all_extracted_preds_str
+
+
+        # 5. Calculate Pass@k score
+        score = 1.0 if num_correct >= k else 0.0
+        return score
+
+    return compute_pass_at_k
+
+
+# Pass@k Metric for GPQA using the custom function
+gpqa_pass_at_1_4n = SampleLevelMetric(
+    metric_name="gpqa_pass@1:4_samples",
+    # Use the factory to create the function with k=1, n=4
+    sample_level_fn=create_gpqa_pass_at_k_fn(k=1, n=4),
+    category=MetricCategory.GENERATIVE_SAMPLING,
+    use_case=MetricUseCase.REASONING, # Or KNOWLEDGE_MC
+    corpus_level_fn=np.mean,
+    higher_is_better=True,
+)
 
 # Define tasks
 aime24 = LightevalTaskConfig(
@@ -123,7 +273,8 @@ aime24 = LightevalTaskConfig(
     few_shots_split=None,
     few_shots_select=None,
     generation_size=32768,
-    metric=[expr_gold_metric],
+    # metric=[expr_gold_metric, math_pass_at_1_4n],
+    metric=[math_pass_at_1_4n],
     version=1,
 )
 aime25 = LightevalTaskConfig(
@@ -137,7 +288,8 @@ aime25 = LightevalTaskConfig(
     few_shots_split=None,
     few_shots_select=None,
     generation_size=32768,
-    metric=[expr_gold_metric],
+    # metric=[expr_gold_metric, math_pass_at_1_4n],
+    metric=[math_pass_at_1_4n],
     version=1,
 )
 math_500 = LightevalTaskConfig(
@@ -151,7 +303,8 @@ math_500 = LightevalTaskConfig(
     few_shots_split=None,
     few_shots_select=None,
     generation_size=32768,
-    metric=[latex_gold_metric],
+    # metric=[latex_gold_metric, math_pass_at_1_4n],
+    metric=[math_pass_at_1_4n],
     version=1,
 )
 gpqa_diamond = LightevalTaskConfig(
@@ -165,7 +318,8 @@ gpqa_diamond = LightevalTaskConfig(
     few_shots_split=None,
     few_shots_select=None,
     generation_size=32768,  # needed for reasoning models like R1
-    metric=[gpqa_metric],
+    # metric=[gpqa_metric, gpqa_pass_at_1_4n],
+    metric=[math_pass_at_1_4n],
     stop_sequence=[],  # no stop sequence, will use eos token
     trust_dataset=True,
     version=1,
