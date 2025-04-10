@@ -877,6 +877,30 @@ class CPOTrainer(Trainer):
         )
         metrics[f"{prefix}nll_loss"] = self.accelerator.gather_for_metrics(policy_nll_loss).detach().mean().item()
 
+        # Add SimPO gradient coefficient metrics if using SimPO loss
+        if self.loss_type == "simpo":
+            logits = policy_chosen_logps - policy_rejected_logps
+            gamma_logratios = self.simpo_gamma / self.beta
+            adjusted_logits = logits - gamma_logratios
+            coe = torch.sigmoid(-self.beta * adjusted_logits).detach()
+            
+            # Gather metrics for coefficients
+            gathered_coe = self.accelerator.gather_for_metrics(coe)
+            metrics[f"{prefix}simpo_coe/mean"] = gathered_coe.mean().item()
+            metrics[f"{prefix}simpo_coe/median"] = gathered_coe.median().item()
+            metrics[f"{prefix}simpo_coe/min"] = gathered_coe.min().item()
+            metrics[f"{prefix}simpo_coe/max"] = gathered_coe.max().item()
+            metrics[f"{prefix}simpo_coe/std"] = gathered_coe.std().item()
+            
+            # Also log the ratio between chosen and rejected logps
+            log_ratio = policy_chosen_logps - policy_rejected_logps
+            gathered_log_ratio = self.accelerator.gather_for_metrics(log_ratio)
+            metrics[f"{prefix}log_ratio/mean"] = gathered_log_ratio.mean().item()
+            metrics[f"{prefix}log_ratio/median"] = gathered_log_ratio.median().item()
+            metrics[f"{prefix}log_ratio/min"] = gathered_log_ratio.min().item()
+            metrics[f"{prefix}log_ratio/max"] = gathered_log_ratio.max().item()
+            metrics[f"{prefix}log_ratio/std"] = gathered_log_ratio.std().item()
+
         if self.aux_loss_enabled:
             loss += self.aux_loss_coef * aux_loss
 
