@@ -823,18 +823,52 @@ class CPOTrainer(Trainer):
         reward_accuracies = (chosen_rewards > rejected_rewards).float()
 
         prefix = "eval_" if train_eval == "eval" else ""
+
+        # Add these two lines to calculate the lengths for averaging later
+        chosen_lengths = batch["chosen_attention_mask"].sum(dim=1).float()  # shape: (batch_size,)
+        rejected_lengths = batch["rejected_attention_mask"].sum(dim=1).float()  # shape: (batch_size,)
+
         metrics[f"{prefix}rewards/chosen"] = self.accelerator.gather_for_metrics(chosen_rewards).mean().item()
         metrics[f"{prefix}rewards/rejected"] = self.accelerator.gather_for_metrics(rejected_rewards).mean().item()
         metrics[f"{prefix}rewards/accuracies"] = self.accelerator.gather_for_metrics(reward_accuracies).mean().item()
         metrics[f"{prefix}rewards/margins"] = (
             self.accelerator.gather_for_metrics(chosen_rewards - rejected_rewards).mean().item()
         )
-        metrics[f"{prefix}logps/rejected"] = (
-            self.accelerator.gather_for_metrics(policy_rejected_logps).detach().mean().item()
-        )
-        metrics[f"{prefix}logps/chosen"] = (
-            self.accelerator.gather_for_metrics(policy_chosen_logps).detach().mean().item()
-        )
+
+        # Modification begins here
+        if self.loss_type in ["ipo", "simpo"]:
+            # logps/chosen and logps/rejected are already the average per token, so we need to multiple to get sum
+            metrics[f"{prefix}logps/rejected"] = (
+                self.accelerator.gather_for_metrics(policy_rejected_logps * rejected_lengths).detach().mean().item()
+            )
+            metrics[f"{prefix}logps/chosen"] = (
+                self.accelerator.gather_for_metrics(policy_chosen_logps * chosen_lengths).detach().mean().item()
+            )
+        else:
+            # the original code, for other loss types. Make sure to create the average version
+            metrics[f"{prefix}logps/rejected"] = (
+                self.accelerator.gather_for_metrics(policy_rejected_logps).detach().mean().item()
+            )
+            metrics[f"{prefix}logps/chosen"] = (
+                self.accelerator.gather_for_metrics(policy_chosen_logps).detach().mean().item()
+            )
+
+        # Add normalized metrics.
+        if self.loss_type in ["ipo", "simpo"]: #These were already average.
+            metrics[f"{prefix}logps/rejected_normalized"] = (
+                self.accelerator.gather_for_metrics(policy_rejected_logps).detach().mean().item()
+            )
+            metrics[f"{prefix}logps/chosen_normalized"] = (
+                self.accelerator.gather_for_metrics(policy_chosen_logps).detach().mean().item()
+            )
+        else: #Calculate averages.
+                metrics[f"{prefix}logps/rejected_normalized"] = (
+                self.accelerator.gather_for_metrics(policy_rejected_logps / rejected_lengths).detach().mean().item()
+            )
+                metrics[f"{prefix}logps/chosen_normalized"] = (
+                self.accelerator.gather_for_metrics(policy_chosen_logps / chosen_lengths).detach().mean().item()
+            )
+
         metrics[f"{prefix}logits/rejected"] = (
             self.accelerator.gather_for_metrics(policy_rejected_logits.detach().mean()).mean().item()
         )
