@@ -83,6 +83,35 @@ if is_wandb_available():
 if is_deepspeed_available():
     import deepspeed
 
+def _compute_stats(data: torch.Tensor, prefix: str) -> dict[str, float]:
+    """Computes mean, median, std, min, max for a tensor."""
+    if data is None or data.numel() == 0:
+        return {
+            f"{prefix}/mean": 0.0,
+            f"{prefix}/median": 0.0,
+            f"{prefix}/std": 0.0,
+            f"{prefix}/min": 0.0,
+            f"{prefix}/max": 0.0,
+        }
+    # Ensure float32 for stable calculations like std, median
+    data = data.detach().float()
+    # Filter out NaNs and Infs if they occur, though ideally they shouldn't
+    data = data[~(torch.isnan(data) | torch.isinf(data))]
+    if data.numel() == 0: # Check again after filtering
+         return {
+            f"{prefix}/mean": 0.0,
+            f"{prefix}/median": 0.0,
+            f"{prefix}/std": 0.0,
+            f"{prefix}/min": 0.0,
+            f"{prefix}/max": 0.0,
+        }
+    return {
+        f"{prefix}/mean": data.mean().item(),
+        f"{prefix}/median": data.median().item(),
+        f"{prefix}/std": data.std().item(),
+        f"{prefix}/min": data.min().item(),
+        f"{prefix}/max": data.max().item(),
+    }
 
 @dataclass
 class DataCollatorForPreference(DataCollatorMixin):
@@ -921,6 +950,8 @@ class DPOTrainer(Trainer):
         rejected_logps: torch.FloatTensor,
         ref_chosen_logps: torch.FloatTensor,
         ref_rejected_logps: torch.FloatTensor,
+        chosen_lengths: Optional[torch.FloatTensor] = None, # Added Optional for backward compatibility if not always needed
+        rejected_lengths: Optional[torch.FloatTensor] = None,
     ) -> tuple[torch.FloatTensor, torch.FloatTensor, torch.FloatTensor]:
         """
         Compute the DPO loss for a batch of policy and reference model log probabilities.
@@ -1090,6 +1121,26 @@ class DPOTrainer(Trainer):
             exp_component = torch.exp(-logits)
             # Blend between logistic and exponential component based on log ratio modulation
             losses = logistic_component * (1 - log_ratio_modulation) + exp_component * log_ratio_modulation
+        # NEW: Handle 'reinforce' loss type
+        elif self.loss_type == "reinforce":
+            # Loss is -coef * logp
+            loss_chosen = -self.args.reinforce_chosen_coef * chosen_logps
+            loss_rejected = -self.args.reinforce_rejected_coef * rejected_logps
+
+            # Apply negative weighting if enabled
+            if self.args.use_neg_weighting:
+                if rejected_lengths is None or (rejected_lengths == 0).any():
+                     warnings.warn("Cannot use negative weighting ('negw') because rejected_lengths are missing or contain zeros.")
+                else:
+                    # Ensure lengths are on the correct device and have a minimum value
+                    safe_rejected_lengths = torch.clamp(rejected_lengths.to(device), min=1.0)
+                    normalized_rejected_logps = rejected_logps / safe_rejected_lengths
+                    # Compute weights: exp(gamma * norm_logp) -> ranges (0, 1] for gamma > 0
+                    neg_weights = torch.exp(self.args.neg_weighting_gamma * normalized_rejected_logps)
+                    loss_rejected = loss_rejected * neg_weights
+
+            losses = loss_chosen + loss_rejected
+
 
         else:
             raise ValueError(
@@ -1097,10 +1148,11 @@ class DPOTrainer(Trainer):
                 "'nca_pair', 'robust', 'bco_pair', 'sppo_hard', 'aot', 'aot_pair', 'discopop', 'apo_zero', 'apo_down']"
             )
 
-        chosen_rewards = self.beta * (chosen_logps.to(device) - ref_chosen_logps.to(device)).detach()
-        rejected_rewards = self.beta * (rejected_logps.to(device) - ref_rejected_logps.to(device)).detach()
+        chosen_rewards = self.beta * (chosen_logps - (not self.reference_free) * ref_chosen_logps).detach()
+        rejected_rewards = self.beta * (rejected_logps - (not self.reference_free) * ref_rejected_logps).detach()
 
-        return losses, chosen_rewards, rejected_rewards
+        # Return neg_weights as well
+        return losses, chosen_rewards, rejected_rewards, neg_weights
 
     def concatenated_forward(self, model: nn.Module, batch: dict[str, Union[list, torch.LongTensor]]):
         """Run the given model on the given batch of inputs, concatenating the chosen and rejected inputs together.
@@ -1273,6 +1325,11 @@ class DPOTrainer(Trainer):
         output["mean_chosen_logits"] = mean_chosen_logits
         output["mean_rejected_logits"] = mean_rejected_logits
 
+        # Added by Gemini, not verified
+        output["logits"] = logits # Shape: [batch_size * 2, seq_len, vocab_size]
+        output["per_token_logps"] = per_token_logps # Shape: [batch_size * 2, seq_len]
+        output["loss_mask"] = loss_mask # Shape: [batch_size * 2, seq_len]
+
         if self.aux_loss_enabled:
             output["aux_loss"] = outputs.aux_loss
 
@@ -1286,63 +1343,149 @@ class DPOTrainer(Trainer):
     ):
         """Compute the DPO loss and other metrics for the given batch of inputs for train or test."""
         metrics = {}
+        prefix = "eval_" if train_eval == "eval" else ""
 
+        # --- Get Model Output ---
+        # model_output now contains: chosen_logps, rejected_logps, logits, per_token_logps, loss_mask, etc.
         model_output = self.concatenated_forward(model, batch)
+        chosen_logps = model_output["chosen_logps"]
+        rejected_logps = model_output["rejected_logps"]
 
-        # if ref_chosen_logps and ref_rejected_logps in batch use them, otherwise use the reference model
+        # --- Get Reference Logps ---
         if "ref_chosen_logps" in batch and "ref_rejected_logps" in batch:
             ref_chosen_logps = batch["ref_chosen_logps"]
             ref_rejected_logps = batch["ref_rejected_logps"]
         else:
-            ref_chosen_logps, ref_rejected_logps = self.compute_ref_log_probs(batch)
+            # Ensure ref_model exists or handle reference_free case appropriately before calling
+            if self.reference_free and self.loss_type != "reinforce": # Reinforce is implicitly ref-free
+                 # For ref-free DPO-style losses, ref logps are effectively 0
+                 ref_chosen_logps = torch.zeros_like(chosen_logps)
+                 ref_rejected_logps = torch.zeros_like(rejected_logps)
+            elif self.loss_type == "reinforce": # No ref model needed
+                 ref_chosen_logps = torch.zeros_like(chosen_logps)
+                 ref_rejected_logps = torch.zeros_like(rejected_logps)
+            else:
+                 # Compute using ref model (or peft base model)
+                 ref_chosen_logps, ref_rejected_logps = self.compute_ref_log_probs(batch)
 
-        losses, chosen_rewards, rejected_rewards = self.dpo_loss(
-            model_output["chosen_logps"], model_output["rejected_logps"], ref_chosen_logps, ref_rejected_logps
+        # --- Get Sequence Lengths ---
+        chosen_lengths = batch["chosen_attention_mask"].sum(dim=1).float()
+        rejected_lengths = batch["rejected_attention_mask"].sum(dim=1).float()
+        # Ensure lengths are safe for division
+        safe_chosen_lengths = torch.clamp(chosen_lengths, min=1.0)
+        safe_rejected_lengths = torch.clamp(rejected_lengths, min=1.0)
+
+        # --- Calculate DPO Loss and Rewards ---
+        # Pass lengths for negw calculation if needed
+        losses, chosen_rewards, rejected_rewards, neg_weights = self.dpo_loss(
+            chosen_logps,
+            rejected_logps,
+            ref_chosen_logps,
+            ref_rejected_logps,
+            chosen_lengths=chosen_lengths, # Pass original lengths
+            rejected_lengths=rejected_lengths,
         )
         reward_accuracies = (chosen_rewards > rejected_rewards).float()
 
+        # --- Apply RPO / Weighting / Aux Loss ---
         if self.args.rpo_alpha is not None:
-            losses = losses + self.args.rpo_alpha * model_output["nll_loss"]  # RPO loss from V3 of the paper
+            # Ensure nll_loss is computed in concatenated_forward if needed
+            if "nll_loss" in model_output:
+                 losses = losses + self.args.rpo_alpha * model_output["nll_loss"]
+            else:
+                 warnings.warn("RPO alpha specified but 'nll_loss' not found in model output.")
 
         if self.use_weighting:
-            losses = losses * model_output["policy_weights"]
+             # Ensure policy_weights is computed in concatenated_forward if needed
+             if "policy_weights" in model_output:
+                 losses = losses * model_output["policy_weights"]
+             else:
+                 warnings.warn("use_weighting=True but 'policy_weights' not found in model output.")
 
         if self.aux_loss_enabled:
             losses = losses + self.aux_loss_coef * model_output["aux_loss"]
 
-        prefix = "eval_" if train_eval == "eval" else ""
+        # --- Original Metrics Logging (Mean values) ---
         metrics[f"{prefix}rewards/chosen"] = self.accelerator.gather_for_metrics(chosen_rewards).mean().item()
         metrics[f"{prefix}rewards/rejected"] = self.accelerator.gather_for_metrics(rejected_rewards).mean().item()
         metrics[f"{prefix}rewards/accuracies"] = self.accelerator.gather_for_metrics(reward_accuracies).mean().item()
-        metrics[f"{prefix}rewards/margins"] = (
-            self.accelerator.gather_for_metrics(chosen_rewards - rejected_rewards).mean().item()
-        )
-        metrics[f"{prefix}logps/chosen"] = (
-            self.accelerator.gather_for_metrics(model_output["chosen_logps"]).detach().mean().item()
-        )
-        metrics[f"{prefix}logps/rejected"] = (
-            self.accelerator.gather_for_metrics(model_output["rejected_logps"]).detach().mean().item()
-        )
-        metrics[f"{prefix}logits/chosen"] = (
-            self.accelerator.gather_for_metrics(model_output["mean_chosen_logits"]).detach().mean().item()
-        )
-        metrics[f"{prefix}logits/rejected"] = (
-            self.accelerator.gather_for_metrics(model_output["mean_rejected_logits"]).detach().mean().item()
-        )
-        # ADDED: Compute normalized logps per token.
-        # Use the attention masks to get the true (unpadded) sequence lengths.
-        chosen_lengths = batch["chosen_attention_mask"].sum(dim=1).float()  # shape: (batch_size,)
-        rejected_lengths = batch["rejected_attention_mask"].sum(dim=1).float()  # shape: (batch_size,)
-        normalized_chosen_logps = model_output["chosen_logps"] / chosen_lengths
-        normalized_rejected_logps = model_output["rejected_logps"] / rejected_lengths
-        metrics[f"{prefix}logps/chosen_normalized"] = self.accelerator.gather_for_metrics(normalized_chosen_logps).detach().mean().item()
-        metrics[f"{prefix}logps/rejected_normalized"] = self.accelerator.gather_for_metrics(normalized_rejected_logps).detach().mean().item()
-        metrics[f"{prefix}lengths/chosen"] = chosen_lengths.mean().item()
-        metrics[f"{prefix}lengths/rejected"] = rejected_lengths.mean().item()
-        if self.args.rpo_alpha is not None:
-            metrics[f"{prefix}nll_loss"] = (
-                self.accelerator.gather_for_metrics(model_output["nll_loss"]).detach().mean().item()
-            )
+        metrics[f"{prefix}rewards/margins"] = self.accelerator.gather_for_metrics(chosen_rewards - rejected_rewards).mean().item()
+        # Log raw logps mean (already present)
+        metrics[f"{prefix}logps/chosen_raw_mean"] = self.accelerator.gather_for_metrics(chosen_logps).detach().mean().item()
+        metrics[f"{prefix}logps/rejected_raw_mean"] = self.accelerator.gather_for_metrics(rejected_logps).detach().mean().item()
+        # Log raw logits mean (already present)
+        metrics[f"{prefix}logits/chosen_mean"] = self.accelerator.gather_for_metrics(model_output["mean_chosen_logits"]).detach().mean().item()
+        metrics[f"{prefix}logits/rejected_mean"] = self.accelerator.gather_for_metrics(model_output["mean_rejected_logits"]).detach().mean().item()
+
+        # --- NEW: Detailed Statistics Logging ---
+        gathered_metrics = {}
+
+        # 1. Gradient Coefficient (Only for DPO sigmoid loss for now)
+        if self.loss_type == "sigmoid" and not self.reference_free:
+            # DPO loss = -log_sigmoid(beta * (pi_logratios - ref_logratios))
+            # Gradient is proportional to beta * sigmoid(-beta * (pi_logratios - ref_logratios)) * grad(pi_logratios)
+            # pi_logratios = chosen_logps - rejected_logps
+            # ref_logratios = ref_chosen_logps - ref_rejected_logps
+            pi_logratios = chosen_logps - rejected_logps
+            ref_logratios = ref_chosen_logps - ref_rejected_logps
+            dpo_logits = pi_logratios - ref_logratios # Logit argument to sigmoid in loss
+            # Coefficient on grad(NLL_chosen) is roughly beta * sigmoid(-beta * dpo_logits)
+            # Coefficient on grad(NLL_rejected) is roughly -beta * sigmoid(-beta * dpo_logits)
+            # Let's log the sigmoid term: sigma(-beta * dpo_logits)
+            grad_coeff_term = torch.sigmoid(-self.beta * dpo_logits)
+            gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(grad_coeff_term), f"{prefix}grad_coeff_sigmoid_term"))
+
+        # 2. Logits / Log Ratios (pi_logratios - ref_logratios)
+        if not self.reference_free or self.loss_type=="reinforce": # Calculate even if ref_free for comparison, or for reinforce
+             pi_logratios = chosen_logps - rejected_logps
+             ref_logratios = ref_chosen_logps - ref_rejected_logps # Will be 0 if ref_free or reinforce
+             log_ratios_diff = pi_logratios - ref_logratios
+             gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(log_ratios_diff), f"{prefix}log_ratios_diff"))
+
+        # 3. Logps (Raw sequence logp)
+        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(chosen_logps), f"{prefix}logps/chosen_raw"))
+        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(rejected_logps), f"{prefix}logps/rejected_raw"))
+
+        # 4. Logps Normalized (per token)
+        normalized_chosen_logps = chosen_logps / safe_chosen_lengths
+        normalized_rejected_logps = rejected_logps / safe_rejected_lengths
+        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(normalized_chosen_logps), f"{prefix}logps/chosen_normalized"))
+        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(normalized_rejected_logps), f"{prefix}logps/rejected_normalized"))
+
+        # 5. Logits (Raw model output logits for tokens used in loss)
+        num_examples = chosen_logps.shape[0]
+        all_logits = model_output["logits"] # [2*batch, seq, vocab]
+        all_loss_mask = model_output["loss_mask"] # [2*batch, seq]
+        # Extract logits only where loss_mask is True
+        active_logits = all_logits[all_loss_mask]
+        active_chosen_logits = all_logits[:num_examples][all_loss_mask[:num_examples]]
+        active_rejected_logits = all_logits[num_examples:][all_loss_mask[num_examples:]]
+
+        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(active_chosen_logits), f"{prefix}logits/chosen_active_token"))
+        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(active_rejected_logits), f"{prefix}logits/rejected_active_token"))
+
+        # 6. Logits Normalized (This is ambiguous, let's log stats of mean logits per sequence)
+        # We already log the mean of these means. Let's add the full stats.
+        mean_chosen_logits_per_seq = model_output["mean_chosen_logits"] # Already averaged over tokens for *each sequence*
+        mean_rejected_logits_per_seq = model_output["mean_rejected_logits"]
+        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(mean_chosen_logits_per_seq), f"{prefix}logits/chosen_mean_per_seq"))
+        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(mean_rejected_logits_per_seq), f"{prefix}logits/rejected_mean_per_seq"))
+
+        # 7. Negative Weights (if used)
+        if neg_weights is not None:
+             gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(neg_weights), f"{prefix}neg_weights"))
+
+
+        # Update metrics dict
+        metrics.update(gathered_metrics)
+
+        # --- Log original length metrics ---
+        metrics[f"{prefix}lengths/chosen"] = self.accelerator.gather_for_metrics(chosen_lengths).mean().item()
+        metrics[f"{prefix}lengths/rejected"] = self.accelerator.gather_for_metrics(rejected_lengths).mean().item()
+
+        # --- Log optional losses (RPO NLL, Aux) ---
+        if self.args.rpo_alpha is not None and "nll_loss" in model_output:
+            metrics[f"{prefix}nll_loss"] = self.accelerator.gather_for_metrics(model_output["nll_loss"]).detach().mean().item()
         if self.aux_loss_enabled:
             metrics[f"{prefix}aux_loss"] = (
                 self.accelerator.gather_for_metrics(model_output["aux_loss"]).detach().mean().item()
