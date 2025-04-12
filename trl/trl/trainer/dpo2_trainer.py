@@ -974,6 +974,8 @@ class DPOTrainer(Trainer):
         """
         device = self.accelerator.device
 
+        neg_weights = None
+
         # Get the log ratios for the chosen and rejected responses
         chosen_logratios = chosen_logps.to(device) - (not self.reference_free) * ref_chosen_logps.to(device)
         rejected_logratios = rejected_logps.to(device) - (not self.reference_free) * ref_rejected_logps.to(device)
