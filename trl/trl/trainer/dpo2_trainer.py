@@ -526,7 +526,7 @@ class DPOTrainer(Trainer):
         if self.loss_type == "bco_pair":
             self.running = RunningMoments(self.accelerator)
 
-
+    @staticmethod
     def _compute_stats(data: torch.Tensor, prefix: str) -> dict[str, float]:
         """Computes mean, median, std, min, max for a tensor."""
         if data is None or data.numel() == 0:
