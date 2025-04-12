@@ -83,36 +83,6 @@ if is_wandb_available():
 if is_deepspeed_available():
     import deepspeed
 
-def _compute_stats(data: torch.Tensor, prefix: str) -> dict[str, float]:
-    """Computes mean, median, std, min, max for a tensor."""
-    if data is None or data.numel() == 0:
-        return {
-            f"{prefix}/mean": 0.0,
-            f"{prefix}/median": 0.0,
-            f"{prefix}/std": 0.0,
-            f"{prefix}/min": 0.0,
-            f"{prefix}/max": 0.0,
-        }
-    # Ensure float32 for stable calculations like std, median
-    data = data.detach().float()
-    # Filter out NaNs and Infs if they occur, though ideally they shouldn't
-    data = data[~(torch.isnan(data) | torch.isinf(data))]
-    if data.numel() == 0: # Check again after filtering
-         return {
-            f"{prefix}/mean": 0.0,
-            f"{prefix}/median": 0.0,
-            f"{prefix}/std": 0.0,
-            f"{prefix}/min": 0.0,
-            f"{prefix}/max": 0.0,
-        }
-    return {
-        f"{prefix}/mean": data.mean().item(),
-        f"{prefix}/median": data.median().item(),
-        f"{prefix}/std": data.std().item(),
-        f"{prefix}/min": data.min().item(),
-        f"{prefix}/max": data.max().item(),
-    }
-
 @dataclass
 class DataCollatorForPreference(DataCollatorMixin):
     """
@@ -555,6 +525,37 @@ class DPOTrainer(Trainer):
 
         if self.loss_type == "bco_pair":
             self.running = RunningMoments(self.accelerator)
+
+
+    def _compute_stats(data: torch.Tensor, prefix: str) -> dict[str, float]:
+        """Computes mean, median, std, min, max for a tensor."""
+        if data is None or data.numel() == 0:
+            return {
+                f"{prefix}/mean": 0.0,
+                f"{prefix}/median": 0.0,
+                f"{prefix}/std": 0.0,
+                f"{prefix}/min": 0.0,
+                f"{prefix}/max": 0.0,
+            }
+        # Ensure float32 for stable calculations like std, median
+        data = data.detach().float()
+        # Filter out NaNs and Infs if they occur, though ideally they shouldn't
+        data = data[~(torch.isnan(data) | torch.isinf(data))]
+        if data.numel() == 0: # Check again after filtering
+            return {
+                f"{prefix}/mean": 0.0,
+                f"{prefix}/median": 0.0,
+                f"{prefix}/std": 0.0,
+                f"{prefix}/min": 0.0,
+                f"{prefix}/max": 0.0,
+            }
+        return {
+            f"{prefix}/mean": data.mean().item(),
+            f"{prefix}/median": data.median().item(),
+            f"{prefix}/std": data.std().item(),
+            f"{prefix}/min": data.min().item(),
+            f"{prefix}/max": data.max().item(),
+        }
 
     def _prepare_dataset(
         self,
