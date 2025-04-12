@@ -300,6 +300,7 @@ class DPOConfig(TrainingArguments):
                 "discopop",
                 "apo_zero",
                 "apo_down",
+                "reinforce"
             ],
         },
     )
@@ -391,7 +392,24 @@ class DPOConfig(TrainingArguments):
         default=None,
         metadata={"help": "Deprecated. Use `use_logits_to_keep` instead."},
     )
+    reinforce_chosen_coef: float = field(
+        default=1.0,
+        metadata={"help": "Coefficient for the chosen samples' NLL loss in 'reinforce' mode. Only used if loss_type='reinforce'."}
+    )
+    reinforce_rejected_coef: float = field(
+        default=1.0,
+        metadata={"help": "Coefficient for the rejected samples' NLL loss in 'reinforce' mode. Only used if loss_type='reinforce'."}
+    )
 
+    # NEW: Parameters for negative weighting ('negw') feature
+    use_neg_weighting: bool = field(
+        default=False,
+        metadata={"help": "Whether to apply exponential weighting to negative samples based on normalized logp. Currently only affects 'reinforce' loss."}
+    )
+    neg_weighting_gamma: float = field(
+        default=1.0,
+        metadata={"help": "Gamma parameter for negative sample weighting: weight = exp(gamma * normalized_logp). Only used if use_neg_weighting=True."}
+    )
 
     def __post_init__(self):
         super().__post_init__()
@@ -403,3 +421,18 @@ class DPOConfig(TrainingArguments):
                 DeprecationWarning,
             )
             self.use_logits_to_keep = self.use_num_logits_to_keep
+
+        # NEW: Add validation for 'reinforce' loss
+        if self.loss_type == "reinforce" and not self.reference_free:
+             warnings.warn(
+                "Using loss_type='reinforce' typically implies a reference-free setup. "
+                "Consider setting `reference_free=True`.",
+                UserWarning,
+            )
+        # NEW: Add validation for 'negw' feature
+        if self.use_neg_weighting and self.loss_type != "reinforce":
+            warnings.warn(
+                "`use_neg_weighting` is currently only implemented for `loss_type='reinforce'`. "
+                "It will have no effect.",
+                UserWarning,
+            )
