@@ -101,8 +101,18 @@ from trl import (
     DataCollatorForCompletionOnlyLM
 )
 
+print(f"--- ENV CHECK [PID {os.getpid()}] ---", file=sys.stderr)
+print(f"RANK={os.environ.get('RANK', 'Not Set')}", file=sys.stderr)
+print(f"WORLD_SIZE={os.environ.get('WORLD_SIZE', 'Not Set')}", file=sys.stderr)
+print(f"LOCAL_RANK={os.environ.get('LOCAL_RANK', 'Not Set')}", file=sys.stderr)
+print(f"MASTER_ADDR={os.environ.get('MASTER_ADDR', 'Not Set')}", file=sys.stderr)
+print(f"MASTER_PORT={os.environ.get('MASTER_PORT', 'Not Set')}", file=sys.stderr)
+print(f"--- END ENV CHECK ---", file=sys.stderr)
+sys.stderr.flush()
+
 INSTRUCTION_TEMPLATE = None
-RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
+# RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
+RESPONSE_TEMPLATE = "<｜Assistant｜>"
 
 logger = logging.getLogger(__name__)
 
@@ -367,6 +377,9 @@ def main(script_args, training_args: SFTConfig, model_args):
         callbacks=get_callbacks(training_args, model_args),
         data_collator=data_collator,
     )
+
+    logger.info(f"[Rank {trainer.args.process_index}] Trainer initialized. Args world_size: {trainer.args.world_size}")
+    logger.info(f"[Rank {trainer.args.process_index}] Accelerator num_processes: {trainer.accelerator.num_processes}")
 
     # --- Training Loop ---
     logger.info("*** Train ***")
