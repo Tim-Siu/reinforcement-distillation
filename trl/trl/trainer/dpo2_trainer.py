@@ -1126,23 +1126,33 @@ class DPOTrainer(Trainer):
             losses = logistic_component * (1 - log_ratio_modulation) + exp_component * log_ratio_modulation
         # NEW: Handle 'reinforce' loss type
         elif self.loss_type == "reinforce":
-            # Loss is -coef * logp
-            loss_chosen = -self.args.reinforce_chosen_coef * chosen_logps
-            loss_rejected = -self.args.reinforce_rejected_coef * rejected_logps
+            # Ensure lengths are available and safe for division
+            if chosen_lengths is None or rejected_lengths is None:
+                 raise ValueError("Sequence lengths are required for 'reinforce' loss type.")
+            if (chosen_lengths == 0).any() or (rejected_lengths == 0).any():
+                 warnings.warn("Found sequences with length 0. Clamping to 1 for normalization.")
 
-            # Apply negative weighting if enabled
+            safe_chosen_lengths = torch.clamp(chosen_lengths.to(device), min=1.0)
+            safe_rejected_lengths = torch.clamp(rejected_lengths.to(device), min=1.0)
+
+            # Normalize log probabilities by sequence length
+            normalized_chosen_logps = chosen_logps / safe_chosen_lengths
+            normalized_rejected_logps = rejected_logps / safe_rejected_lengths
+
+            # Loss is -coef * normalized_logp
+            loss_chosen = -self.args.reinforce_chosen_coef * normalized_chosen_logps
+            loss_rejected = self.args.reinforce_rejected_coef * normalized_rejected_logps
+
+            # Apply negative weighting if enabled (using the already normalized logp)
             if self.args.use_neg_weighting:
-                if rejected_lengths is None or (rejected_lengths == 0).any():
-                     warnings.warn("Cannot use negative weighting ('negw') because rejected_lengths are missing or contain zeros.")
-                else:
-                    # Ensure lengths are on the correct device and have a minimum value
-                    safe_rejected_lengths = torch.clamp(rejected_lengths.to(device), min=1.0)
-                    normalized_rejected_logps = rejected_logps / safe_rejected_lengths
-                    # Compute weights: exp(gamma * norm_logp) -> ranges (0, 1] for gamma > 0
-                    neg_weights = torch.exp(self.args.neg_weighting_gamma * normalized_rejected_logps)
-                    loss_rejected = loss_rejected * neg_weights
+                # Compute weights: exp(gamma * norm_logp) -> ranges (0, 1] for gamma > 0
+                # Note: normalized_rejected_logps is already computed above
+                neg_weights = torch.exp(self.args.neg_weighting_gamma * normalized_rejected_logps)
+                loss_rejected = loss_rejected * neg_weights
 
             losses = loss_chosen + loss_rejected
+            chosen_rewards = normalized_chosen_logps.detach()
+            rejected_rewards = normalized_rejected_logps.detach()
 
 
         else:
@@ -1151,8 +1161,9 @@ class DPOTrainer(Trainer):
                 "'nca_pair', 'robust', 'bco_pair', 'sppo_hard', 'aot', 'aot_pair', 'discopop', 'apo_zero', 'apo_down']"
             )
 
-        chosen_rewards = self.beta * (chosen_logps - (not self.reference_free) * ref_chosen_logps).detach()
-        rejected_rewards = self.beta * (rejected_logps - (not self.reference_free) * ref_rejected_logps).detach()
+        if self.loss_type != "reinforce":
+            chosen_rewards = self.beta * (chosen_logps - (not self.reference_free) * ref_chosen_logps).detach()
+            rejected_rewards = self.beta * (rejected_logps - (not self.reference_free) * ref_rejected_logps).detach()
 
         # Return neg_weights as well
         return losses, chosen_rewards, rejected_rewards, neg_weights
@@ -1413,12 +1424,12 @@ class DPOTrainer(Trainer):
         metrics[f"{prefix}rewards/rejected"] = self.accelerator.gather_for_metrics(rejected_rewards).mean().item()
         metrics[f"{prefix}rewards/accuracies"] = self.accelerator.gather_for_metrics(reward_accuracies).mean().item()
         metrics[f"{prefix}rewards/margins"] = self.accelerator.gather_for_metrics(chosen_rewards - rejected_rewards).mean().item()
-        # Log raw logps mean (already present)
-        metrics[f"{prefix}logps/chosen_raw_mean"] = self.accelerator.gather_for_metrics(chosen_logps).detach().mean().item()
-        metrics[f"{prefix}logps/rejected_raw_mean"] = self.accelerator.gather_for_metrics(rejected_logps).detach().mean().item()
-        # Log raw logits mean (already present)
-        metrics[f"{prefix}logits/chosen_mean"] = self.accelerator.gather_for_metrics(model_output["mean_chosen_logits"]).detach().mean().item()
-        metrics[f"{prefix}logits/rejected_mean"] = self.accelerator.gather_for_metrics(model_output["mean_rejected_logits"]).detach().mean().item()
+        # Log raw logps mean (rename for clarity if desired, or keep original names)
+        metrics[f"{prefix}logps/chosen"] = self.accelerator.gather_for_metrics(chosen_logps).detach().mean().item()
+        metrics[f"{prefix}logps/rejected"] = self.accelerator.gather_for_metrics(rejected_logps).detach().mean().item()
+        # Log mean of mean logits per sequence (Original Logit Logging)
+        metrics[f"{prefix}logits/chosen"] = self.accelerator.gather_for_metrics(model_output["mean_chosen_logits"]).detach().mean().item()
+        metrics[f"{prefix}logits/rejected"] = self.accelerator.gather_for_metrics(model_output["mean_rejected_logits"]).detach().mean().item()
 
         # --- NEW: Detailed Statistics Logging ---
         gathered_metrics = {}
@@ -1455,24 +1466,24 @@ class DPOTrainer(Trainer):
         gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(normalized_chosen_logps), f"{prefix}logps/chosen_normalized"))
         gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(normalized_rejected_logps), f"{prefix}logps/rejected_normalized"))
 
-        # 5. Logits (Raw model output logits for tokens used in loss)
-        num_examples = chosen_logps.shape[0]
-        all_logits = model_output["logits"] # [2*batch, seq, vocab]
-        all_loss_mask = model_output["loss_mask"] # [2*batch, seq]
-        # Extract logits only where loss_mask is True
-        active_logits = all_logits[all_loss_mask]
-        active_chosen_logits = all_logits[:num_examples][all_loss_mask[:num_examples]]
-        active_rejected_logits = all_logits[num_examples:][all_loss_mask[num_examples:]]
+        # # 5. Logits (Raw model output logits for tokens used in loss)
+        # num_examples = chosen_logps.shape[0]
+        # all_logits = model_output["logits"] # [2*batch, seq, vocab]
+        # all_loss_mask = model_output["loss_mask"] # [2*batch, seq]
+        # # Extract logits only where loss_mask is True
+        # active_logits = all_logits[all_loss_mask]
+        # active_chosen_logits = all_logits[:num_examples][all_loss_mask[:num_examples]]
+        # active_rejected_logits = all_logits[num_examples:][all_loss_mask[num_examples:]]
 
-        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(active_chosen_logits), f"{prefix}logits/chosen_active_token"))
-        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(active_rejected_logits), f"{prefix}logits/rejected_active_token"))
+        # gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(active_chosen_logits), f"{prefix}logits/chosen_active_token"))
+        # gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(active_rejected_logits), f"{prefix}logits/rejected_active_token"))
 
-        # 6. Logits Normalized (This is ambiguous, let's log stats of mean logits per sequence)
-        # We already log the mean of these means. Let's add the full stats.
-        mean_chosen_logits_per_seq = model_output["mean_chosen_logits"] # Already averaged over tokens for *each sequence*
-        mean_rejected_logits_per_seq = model_output["mean_rejected_logits"]
-        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(mean_chosen_logits_per_seq), f"{prefix}logits/chosen_mean_per_seq"))
-        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(mean_rejected_logits_per_seq), f"{prefix}logits/rejected_mean_per_seq"))
+        # # 6. Logits Normalized (This is ambiguous, let's log stats of mean logits per sequence)
+        # # We already log the mean of these means. Let's add the full stats.
+        # mean_chosen_logits_per_seq = model_output["mean_chosen_logits"] # Already averaged over tokens for *each sequence*
+        # mean_rejected_logits_per_seq = model_output["mean_rejected_logits"]
+        # gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(mean_chosen_logits_per_seq), f"{prefix}logits/chosen_mean_per_seq"))
+        # gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(mean_rejected_logits_per_seq), f"{prefix}logits/rejected_mean_per_seq"))
 
         # 7. Negative Weights (if used)
         if neg_weights is not None:
