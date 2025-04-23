@@ -19,18 +19,6 @@
 # Ignore __pycache__ directories
 __pycache__/
 
-experiments/checkpoints/*
+experiments_trl/hf_datasets
 
-experiments/data
-
-experiments/dataset
-
-experiments/raw
-
-experiments/wandb
-
-experiments/outputs
-
-experiments/notebooks
-
-research/
+experiments_trl/processed_datasets

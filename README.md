@@ -34,26 +34,33 @@ uv pip install -e .
 ---
 ### Data preprocessing
 
-Make sure you have `OpenR1-Math-Raw` downloaded in `experiments_trl/hf_datasets`.
+Make sure you have `OpenR1-Math-Raw` downloaded in `experiments_trl/hf_datasets`. You can download the dataset with
+
+```
+git lfs install
+
+git clone https://huggingface.co/datasets/open-r1/OpenR1-Math-Raw
+```
 
 Navigate to `experiments_trl/`
 
 1.  To clean the LandMV correct data (77629 entries, subset of OpenR1 raw), run:
 
     ```bash
-    python experiments_trl/data_preprocess/clean_base_shuffled.py
+    python data_preprocess/clean_base_shuffled.py
     ```
 
-2.  To clean the data for positive/negative pairs, run:
+2.  To curate the data for positive/negative pairs (53175 queries, used in our methods and DPO), run:
 
     ```bash
-    python experiments_trl/data_preprocess/clean_base_shuffled_dpo.py
+    python data_preprocess/clean_base_shuffled_dpo.py
     ```
 
-3.  To filter data beyond our defined length limits, run:
+3.  To filter out data beyond our defined length limits, run:
 
     ```bash
-    python experiments_trl/data_preprocess/study_length_distribution.py
+    uv pip install matplotlib seaborn
+    python data_preprocess/study_length_distribution.py
     ```
 ---
 
@@ -77,7 +84,9 @@ Navigate to `experiments_trl/`
     bash recipes/sft/sft_landmv_5ep/eval.sh
     ```
 
-2.  Learn **negative** samples with reinforcement distillation for 1 epoch:
+### Learn **negative** samples
+
+1.  Learn **negative** samples with our proposed reinforcement distillation for 1 epoch:
 
     ```bash
     bash recipes/red/red_1_08_1e-6/train.sh
