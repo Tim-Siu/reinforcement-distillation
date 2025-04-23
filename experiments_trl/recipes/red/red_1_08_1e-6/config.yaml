@@ -1,0 +1,61 @@
+# --- Model Arguments ---
+model_name_or_path: data/Qwen-1.5B-Math-R1-78k
+ref_model_name_or_path: data/Qwen-1.5B-Math-R1-78k # No effect
+model_revision: main
+ref_model_revision: main
+torch_dtype: bfloat16
+attn_implementation: flash_attention_2
+ref_attn_implementation: flash_attention_2
+# --- Data Arguments ---
+dataset_name: processed_datasets/openr1_math_raw_processed/openr1_math_dpo_LandMV_shuffled_input/openr1_math_dpo_LandMV_shuffled_input_filtered_P800_R19000
+dataset_num_proc: 48
+
+# --- DPO Hyperparameters ---
+beta: 0.1                        # No effect
+loss_type: reinforce             # our custom loss
+learning_rate: 1.0e-06
+max_prompt_length: 800          # Max length for prompt portion
+max_length: 19800                 # Max total length (prompt + completion) for DPO pairs
+max_completion_length: null      # DPOTrainer calculates this from max_length and max_prompt_length if null
+precompute_ref_log_probs: false  # No effect
+label_smoothing: 0.0             # No effect
+reference_free: true            # Use the provided reference model
+padding_free: true               # Use padding-free optimization (requires FA2)
+truncation_mode: keep_end        # How to truncate long sequences
+reinforce_chosen_coef: 1.0
+reinforce_rejected_coef: 0.8
+
+# --- General Training Hyperparameters (mostly kept from SFT) ---
+weight_decay: 0.0001
+optim: adamw_torch
+lr_scheduler_type: linear        
+warmup_ratio: 0.1
+gradient_accumulation_steps: 4
+per_device_train_batch_size: 1
+per_device_eval_batch_size: 1 # Global batch size of 32
+
+# --- DPOTrainer Configuration ---
+output_dir: data/Qwen-1.5B-Math-RED-53k # *** UPDATED OUTPUT DIR ***
+overwrite_output_dir: true
+num_train_epochs: 1              # Keep from SFT
+max_steps: -1                    # Train for epochs unless specified
+bf16: true                       # Keep consistent with mixed_precision
+do_eval: false                   # Keep from SFT
+eval_strategy: 'no'              # Keep from SFT
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+hub_model_id: Qwen-1.5B-Math-RED-53k # *** UPDATED HUB ID (if pushing) ***
+hub_strategy: every_save
+log_level: info
+logging_steps: 5
+logging_strategy: steps
+# packing: false # packing is not used in DPOTrainer config directly
+push_to_hub: false
+report_to:
+- wandb
+save_strategy: "steps"
+save_steps: 200
+seed: 42
+save_only_model: True
+reference_free: True
