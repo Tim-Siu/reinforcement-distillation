@@ -111,8 +111,8 @@ print(f"--- END ENV CHECK ---", file=sys.stderr)
 sys.stderr.flush()
 
 INSTRUCTION_TEMPLATE = None
-# RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
-RESPONSE_TEMPLATE = "<｜Assistant｜>"
+RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
+# RESPONSE_TEMPLATE = "<｜Assistant｜>"
 
 logger = logging.getLogger(__name__)
 
