@@ -35,8 +35,8 @@ import shutil # For directory removal
 # %% Configuration
 
 # --- !!! SET THESE PATHS AND PARAMETERS !!! ---
-DATASET_PATH = "../../processed_datasets/openr1_math_raw_processed/openr1_math_dpo_LandMV_shuffled_input"
-TOKENIZER_NAME_OR_PATH = "../../../models/modified/Qwen2.5-Math-1.5B" # Match DPO model
+DATASET_PATH = "processed_datasets/openr1_math_raw_processed/openr1_math_dpo_LandMV_shuffled_input"
+TOKENIZER_NAME_OR_PATH = "../../models/modified/Qwen2.5-Math-1.5B" # Match DPO model
 
 # --- Optional Filtering ---
 APPLY_FILTERING = True # Set to True to enable filtering

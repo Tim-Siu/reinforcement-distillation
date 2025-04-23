@@ -10,11 +10,11 @@ print("Current working directory:", os.getcwd())
 # os.environ['HF_ENDPOINT'] = 'https://hf-mirror.com'
 
 # Specify the correct path to the dataset directory containing the raw data
-dataset_path = "../hf_datasets/OpenR1-Math-Raw" # !!! ADJUST THIS PATH IF NEEDED !!!
+dataset_path = "hf_datasets/OpenR1-Math-Raw" # !!! ADJUST THIS PATH IF NEEDED !!!
 # Specify the split containing the raw data (e.g., 'train')
 split_name = "train"
 
-output_base_dir = "../processed_datasets/openr1_math_raw_processed" # New output dir
+output_base_dir = "processed_datasets/openr1_math_raw_processed" # New output dir
 os.makedirs(output_base_dir, exist_ok=True)
 
 # Source to exclude
