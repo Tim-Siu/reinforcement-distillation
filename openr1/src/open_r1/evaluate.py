@@ -92,7 +92,7 @@ gpqa_metric_config = {
     "gold_extraction_target": [IndicesExtractionConfig(prefix_for_extraction="NativeLetters")],
     "pred_extraction_target": [IndicesExtractionConfig(prefix_for_extraction="NativeLetters")],
     "fallback_mode": "first_match", # Use fallback for robustness
-    "extraction_mode": "any_match",
+    "extraction_mode": "first_match",
     "precision": 5, # Not used for indices but kept for consistency
 }
 gpqa_metric = multilingual_extractive_match_metric(**gpqa_metric_config)
@@ -319,7 +319,7 @@ gpqa_diamond = LightevalTaskConfig(
     few_shots_select=None,
     generation_size=32768,  # needed for reasoning models like R1
     # metric=[gpqa_metric, gpqa_pass_at_1_4n],
-    metric=[math_pass_at_1_4n],
+    metric=[gpqa_metric],
     stop_sequence=[],  # no stop sequence, will use eos token
     trust_dataset=True,
     version=1,
