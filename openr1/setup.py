@@ -67,7 +67,6 @@ _deps = [
     "sentencepiece>=0.1.99",
     "torch==2.5.1",
     "transformers==4.50.0",
-    "trl==0.16.0",
     "vllm==0.7.2",
     "wandb>=0.19.1",
 ]
@@ -90,7 +89,7 @@ extras["tests"] = deps_list("pytest", "parameterized", "math-verify")
 extras["torch"] = deps_list("torch")
 extras["quality"] = deps_list("ruff", "isort", "flake8")
 extras["code"] = deps_list("e2b-code-interpreter", "python-dotenv")
-extras["eval"] = deps_list("lighteval", "math-verify")
+extras["eval"] = deps_list("math-verify")
 extras["dev"] = extras["quality"] + extras["tests"] + extras["eval"]
 
 # core dependencies shared across the whole project - keep this to a bare minimum :)
@@ -110,7 +109,6 @@ install_requires = [
     deps["safetensors"],
     deps["sentencepiece"],
     deps["transformers"],
-    deps["trl"],
     deps["wandb"],
 ]
 
@@ -125,7 +123,7 @@ setup(
     keywords="llm inference-time compute reasoning",
     license="Apache",
     url="https://github.com/huggingface/open-r1",
-    package_dir={"": "src"},
+    package_dir={"": "src", "lighteval": "../lighteval", "trl": "../trl"},
     packages=find_packages("src"),
     zip_safe=False,
     extras_require=extras,
