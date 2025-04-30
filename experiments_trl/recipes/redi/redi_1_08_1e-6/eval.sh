@@ -1,5 +1,5 @@
 NUM_GPUS=8
-MODEL_PATH=data/Qwen-1.5B-Math-RED-53k
+MODEL_PATH=data/Qwen-1.5B-Math-REDI-53k
 MODEL_ARGS="pretrained=$MODEL_PATH,dtype=bfloat16,data_parallel_size=$NUM_GPUS,max_model_length=32768,gpu_memory_utilization=0.8,generation_parameters={max_new_tokens:32768,temperature:0.6,top_p:0.95}"
 OUTPUT_DIR=data/evals/$MODEL_PATH
 

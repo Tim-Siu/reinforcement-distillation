@@ -29,7 +29,7 @@ A key finding is that **asymmetric weighting** of positive and negative sample g
 <div align="center">
 <img src="figures/redi_comparison.svg" width="80%" />
 
-<sub>* For more details, see our [blog post](https://shuyaoxu.notion.site/redi).*</sub>
+<sub>*For more details, see our [blog post](https://shuyaoxu.notion.site/redi).*</sub>
 </div>
 
 
@@ -104,24 +104,24 @@ To start running experiments on Qwen/Qwen2.5-Math-1.5B, make sure you **modify**
 
 Train on the REDI Postives for 5 epochs:
 
-    ```bash
-    cd experiments_trl/
-    bash recipes/sft/sft_landmv_5ep/train.sh
-    bash recipes/sft/sft_landmv_5ep/eval.sh
-    ```
+```bash
+cd experiments_trl/
+bash recipes/sft/sft_landmv_5ep/train.sh
+bash recipes/sft/sft_landmv_5ep/eval.sh
+```
 
 Learn **negative** samples with our proposed reinforcement distillation and REDI Pairs for 1 epoch:
 
-    ```bash
-    bash recipes/redi/redi_1_08_1e-6/train.sh
-    bash recipes/redi/redi_1_08_1e-6/eval.sh
-    ```
+```bash
+bash recipes/redi/redi_1_08_1e-6/train.sh
+bash recipes/redi/redi_1_08_1e-6/eval.sh
+```
 
 ## Evaluation
 
-For comparison with other methods, we use DeepScalerR for evaluation and will be realising evaluation code very soon. Stay tuned!
+For comparison with other methods, we use DeepScalerR for evaluation and will be releasing evaluation code very soon. Stay tuned!
 
-| Model             | AIME | 24AMC | 23MATH | 500Minerva | Olympiad Bench | Avg. |
+| Model             | AIME24 | AMC23 | MATH500 | Minerva | Olympiad Bench | Avg. |
 |-------------------|------|-------|--------|------------|----------------|------|
 | Deepseek-R1-Distill-Qwen-1.5b | 28.3 | 62.1  | 83.2   | 26.0       | 43.1           | 48.5 |
 | SimpleRL-Zero     | 4.2  | 35.0  | 59.0   | 20.2       | 21.0           | 27.9 |
@@ -138,10 +138,10 @@ We thank **Hugging Face** for the Open R1 dataset and libraries like `transforme
 If you find REDI useful in your research, please consider citing our work using the following BibTeX entry:
 
 ```bibtex
-@misc{xu2024redi,
+@misc{xu2025redi,
   author       = {Xu, Shuyao and Peng, Cheng and Long, Jiangxuan and Xu, Weidi},
   title        = {Reinforcement Distillation: Learning from Off-policy Negative Data},
-  year         = {2024},
+  year         = {2025},
   month        = {April},
   howpublished = {Blog Post / Technical Report},
   url          = {https://shuyaoxu.notion.site/redi},

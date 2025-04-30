@@ -35,7 +35,7 @@ per_device_train_batch_size: 1
 per_device_eval_batch_size: 1 # Global batch size of 32
 
 # --- DPOTrainer Configuration ---
-output_dir: data/Qwen-1.5B-Math-RED-53k # *** UPDATED OUTPUT DIR ***
+output_dir: data/Qwen-1.5B-Math-REDI-53k # *** UPDATED OUTPUT DIR ***
 overwrite_output_dir: true
 num_train_epochs: 1              # Keep from SFT
 max_steps: -1                    # Train for epochs unless specified
@@ -45,7 +45,7 @@ eval_strategy: 'no'              # Keep from SFT
 gradient_checkpointing: true
 gradient_checkpointing_kwargs:
   use_reentrant: false
-hub_model_id: Qwen-1.5B-Math-RED-53k # *** UPDATED HUB ID (if pushing) ***
+hub_model_id: Qwen-1.5B-Math-REDI-53k # *** UPDATED HUB ID (if pushing) ***
 hub_strategy: every_save
 log_level: info
 logging_steps: 5

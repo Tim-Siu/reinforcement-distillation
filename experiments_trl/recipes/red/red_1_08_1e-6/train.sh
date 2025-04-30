@@ -1,1 +1,0 @@
-accelerate launch --config_file recipes/accelerate_configs/zero2.yaml open_r1_sft.py --config recipes/red/red_1_08_1e-6/config.yaml
