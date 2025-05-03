@@ -1,0 +1,48 @@
+# Model arguments
+model_name_or_path: ../models/modified/gemma-2-2b
+model_revision: main
+torch_dtype: bfloat16
+attn_implementation: flash_attention_2
+
+# Data training arguments
+dataset_name: processed_datasets/openr1_math_raw_processed/openr1_math_sft_LandMV_filtered_shuffled_input
+dataset_num_proc: 48
+
+# SFT hyperparam
+max_length: 32768
+weight_decay: 0.0001
+optim: adamw_torch
+lr_scheduler_type: linear
+warmup_ratio: 0.1
+learning_rate: 5.0e-05
+gradient_accumulation_steps: 4
+per_device_eval_batch_size: 8
+per_device_train_batch_size: 8
+
+# SFT trainer config
+response_template: "<start_of_turn>model\n"
+long_sequence_strategy: 'padding_free'
+max_steps: -1
+num_train_epochs: 5
+bf16: true
+do_eval: false
+use_liger_kernel: true
+eval_strategy: 'no'
+gradient_checkpointing: true
+gradient_checkpointing_kwargs:
+  use_reentrant: false
+hub_model_id: gemma2-2B-Math-R1-78k
+hub_strategy: every_save
+log_level: info
+logging_steps: 5
+logging_strategy: steps
+packing: false
+output_dir: data/gemma2-2B-Math-R1-78k
+overwrite_output_dir: true
+push_to_hub: false
+report_to:
+- wandb
+save_strategy: "steps"
+save_steps: 200
+save_only_model: True
+seed: 42
