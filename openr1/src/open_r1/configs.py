@@ -90,6 +90,14 @@ class SFTConfig(trl.SFTConfig):
             "help": "Strategy for handling long sequences: 'truncate', 'filter', or 'padding_free'.",
             "choices": ["truncate", "filter", "padding_free"],
         },
+    ),
+    instruction_template: Optional[str] = field(
+        default=None,
+        metadata={"help": "Optional instruction template marker for DataCollatorForCompletionOnlyLM."},
+    )
+    response_template: str = field(
+        default="<|im_start|>assistant\n",
+        metadata={"help": "Response template marker for DataCollatorForCompletionOnlyLM. Crucial for identifying assistant responses."},
     )
 
 @dataclass

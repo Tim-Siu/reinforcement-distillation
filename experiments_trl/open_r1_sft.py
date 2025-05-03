@@ -110,8 +110,8 @@ print(f"MASTER_PORT={os.environ.get('MASTER_PORT', 'Not Set')}", file=sys.stderr
 print(f"--- END ENV CHECK ---", file=sys.stderr)
 sys.stderr.flush()
 
-INSTRUCTION_TEMPLATE = None
-RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
+# INSTRUCTION_TEMPLATE = None
+# RESPONSE_TEMPLATE = "<|im_start|>assistant\n"
 # RESPONSE_TEMPLATE = "<｜Assistant｜>"
 
 logger = logging.getLogger(__name__)
@@ -356,11 +356,15 @@ def main(script_args, training_args: SFTConfig, model_args):
         padding_free = True
 
     logger.info("Instantiating DataCollatorForCompletionOnlyLM.")
+    # Log the templates being used, read from the config
+    logger.info(f"Using instruction_template: {training_args.instruction_template}")
+    logger.info(f"Using response_template: {training_args.response_template}")
 
+    # Pass the templates from the training_args (SFTConfig object)
     data_collator = DataCollatorForCompletionOnlyLM(
         tokenizer=tokenizer,
-        response_template=RESPONSE_TEMPLATE,
-        instruction_template=INSTRUCTION_TEMPLATE,
+        response_template=training_args.response_template, # Read from config
+        instruction_template=training_args.instruction_template, # Read from config
         mlm=False,
     )
 
