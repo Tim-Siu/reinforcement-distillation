@@ -43,14 +43,15 @@ A key finding is that **asymmetric weighting** of positive and negative sample g
 You can install REDI dependencies by running the following commands:
 
 ```bash
-cd openr1
-# Create virtual environment, activate it, and upgrade pip
-uv venv openr1 --python 3.11 && source openr1/bin/activate && uv pip install --upgrade pip
+uv venv redi_env --python 3.11 && source redi_env/bin/activate && uv pip install --upgrade pip
 
 # Install vllm and flash-attn
 uv pip install vllm==0.7.2
 uv pip install matplotlib seaborn
 uv pip install setuptools && uv pip install flash-attn --no-build-isolation
+
+cd openr1
+GIT_LFS_SKIP_SMUDGE=1 uv pip install -e ".[dev]"
 
 huggingface-cli login
 wandb login
