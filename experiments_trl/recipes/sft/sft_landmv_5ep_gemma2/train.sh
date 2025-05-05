@@ -1,0 +1,1 @@
+accelerate launch --config_file recipes/accelerate_configs/zero2_4gpu.yaml open_r1_sft.py --config recipes/sft/sft_landmv_5ep_gemma2/config.yaml

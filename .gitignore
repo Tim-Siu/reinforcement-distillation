@@ -22,3 +22,7 @@ __pycache__/
 experiments_trl/hf_datasets
 
 experiments_trl/processed_datasets
+
+experiments_trl/wandb
+
+experiments_trl/data
