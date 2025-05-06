@@ -1272,6 +1272,28 @@ class DPOTrainer(Trainer):
                 labels = labels[:, -logits_to_keep:]
                 loss_mask = loss_mask[:, -logits_to_keep:]
 
+        # --- START ENTROPY CALCULATION ---
+        # Calculate per-token entropy from logits
+        # Use the loss_mask that corresponds to the logits BEFORE alignment shifts if possible,
+        # or ensure the mask here aligns with the logits used for loss calculation.
+        # Assuming `loss_mask` aligns with the `logits` dimensions used for loss:
+        per_token_entropy = torch.distributions.Categorical(logits=logits).entropy() # Shape: [batch_size * 2, seq_len]
+
+        # Apply the loss mask (only consider entropy of completion tokens)
+        # Use .float() for multiplication if loss_mask is bool
+        masked_entropy = per_token_entropy * loss_mask.float()
+
+        # Calculate mean entropy per sequence over the masked tokens
+        # Clamp sum to avoid division by zero for sequences with no completion tokens (shouldn't happen in DPO)
+        sum_masked_entropy = masked_entropy.sum(dim=-1)
+        num_loss_tokens = loss_mask.sum(dim=-1).clamp(min=1).float()
+        mean_entropy_per_sequence = sum_masked_entropy / num_loss_tokens # Shape: [batch_size * 2]
+
+        # Split into chosen and rejected
+        chosen_mean_entropy = mean_entropy_per_sequence[:num_examples]
+        rejected_mean_entropy = mean_entropy_per_sequence[num_examples:]
+        # --- END ENTROPY CALCULATION ---
+
         if logits.shape[:2] != labels.shape[:2]:
             # for llava, the returned logits include the image tokens (placed before the text tokens)
             seq_len = labels.shape[1]
@@ -1339,6 +1361,11 @@ class DPOTrainer(Trainer):
         output["mean_chosen_logits"] = mean_chosen_logits
         output["mean_rejected_logits"] = mean_rejected_logits
 
+        # --- Add Entropy to Output ---
+        output["chosen_mean_entropy"] = chosen_mean_entropy
+        output["rejected_mean_entropy"] = rejected_mean_entropy
+        # --- End Add Entropy ---
+
         # Added by Gemini, not verified
         output["logits"] = logits # Shape: [batch_size * 2, seq_len, vocab_size]
         output["per_token_logps"] = per_token_logps # Shape: [batch_size * 2, seq_len]
@@ -1364,6 +1391,11 @@ class DPOTrainer(Trainer):
         model_output = self.concatenated_forward(model, batch)
         chosen_logps = model_output["chosen_logps"]
         rejected_logps = model_output["rejected_logps"]
+
+        # --- Retrieve Entropy ---
+        chosen_mean_entropy = model_output["chosen_mean_entropy"]
+        rejected_mean_entropy = model_output["rejected_mean_entropy"]
+        # --- End Retrieve Entropy ---
 
         # --- Get Reference Logps ---
         if "ref_chosen_logps" in batch and "ref_rejected_logps" in batch:
@@ -1431,6 +1463,11 @@ class DPOTrainer(Trainer):
         metrics[f"{prefix}logits/chosen"] = self.accelerator.gather_for_metrics(model_output["mean_chosen_logits"]).detach().mean().item()
         metrics[f"{prefix}logits/rejected"] = self.accelerator.gather_for_metrics(model_output["mean_rejected_logits"]).detach().mean().item()
 
+        # --- Log Mean Entropy ---
+        metrics[f"{prefix}entropy/chosen"] = self.accelerator.gather_for_metrics(chosen_mean_entropy).mean().item()
+        metrics[f"{prefix}entropy/rejected"] = self.accelerator.gather_for_metrics(rejected_mean_entropy).mean().item()
+        # --- End Log Mean Entropy ---
+
         # --- NEW: Detailed Statistics Logging ---
         gathered_metrics = {}
 
@@ -1489,7 +1526,11 @@ class DPOTrainer(Trainer):
         if neg_weights is not None:
              gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(neg_weights), f"{prefix}neg_weights"))
 
-
+        # --- Add Detailed Entropy Stats ---
+        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(chosen_mean_entropy), f"{prefix}entropy/chosen_stats"))
+        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(rejected_mean_entropy), f"{prefix}entropy/rejected_stats"))
+        # --- End Add Detailed Entropy Stats ---
+        
         # Update metrics dict
         metrics.update(gathered_metrics)
 
