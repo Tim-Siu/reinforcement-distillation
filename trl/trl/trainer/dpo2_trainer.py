@@ -1352,8 +1352,36 @@ class DPOTrainer(Trainer):
             # and the second half to the rejected tokens.
             # To find the start of the rejected tokens, we look for the num_examples+1-th zero in pos_id.
             split_idx = (position_ids == 0).nonzero(as_tuple=True)[1][num_examples]
-            mean_chosen_logits = logits[0, :split_idx][loss_mask[0, :split_idx]].mean()
-            mean_rejected_logits = logits[0, split_idx:][loss_mask[0, split_idx:]].mean()
+            # --- Optimized Mean Calculation for Padding-Free ---
+            # Chosen part
+            chosen_logits_part = logits[0, :split_idx]         # Shape [split_idx, vocab_size]
+            chosen_mask_part = loss_mask[0, :split_idx]       # Shape [split_idx]
+            num_chosen_tokens = chosen_mask_part.sum()        # Scalar count
+            if num_chosen_tokens > 0:
+                # Mask logits directly (multiply by 0 or 1) without creating large intermediate tensor
+                # Expand mask to broadcast: [split_idx, 1]
+                masked_chosen_logits = chosen_logits_part * chosen_mask_part.unsqueeze(-1).to(chosen_logits_part.dtype)
+                # Sum all elements where mask was true
+                sum_chosen_logits = masked_chosen_logits.sum()
+                # Total number of elements contributing to the sum = num_tokens * vocab_size
+                total_chosen_elements = num_chosen_tokens * chosen_logits_part.shape[-1]
+                # Avoid division by zero if total_chosen_elements is 0 (e.g., vocab_size=0?)
+                mean_chosen_logits = sum_chosen_logits / total_chosen_elements.clamp(min=1)
+            else: # Handle case where there are no chosen tokens in the mask
+                mean_chosen_logits = torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
+
+            # Rejected part
+            rejected_logits_part = logits[0, split_idx:]      # Shape [sum_seq_len - split_idx, vocab_size]
+            rejected_mask_part = loss_mask[0, split_idx:]   # Shape [sum_seq_len - split_idx]
+            num_rejected_tokens = rejected_mask_part.sum()    # Scalar count
+            if num_rejected_tokens > 0:
+                masked_rejected_logits = rejected_logits_part * rejected_mask_part.unsqueeze(-1).to(rejected_logits_part.dtype)
+                sum_rejected_logits = masked_rejected_logits.sum()
+                total_rejected_elements = num_rejected_tokens * rejected_logits_part.shape[-1]
+                mean_rejected_logits = sum_rejected_logits / total_rejected_elements.clamp(min=1)
+            else:
+                mean_rejected_logits = torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
+            # --- End Optimized Mean Calculation ---
         else:
             mean_chosen_logits = logits[:num_examples][loss_mask[:num_examples]].mean()
             mean_rejected_logits = logits[num_examples:][loss_mask[num_examples:]].mean()
