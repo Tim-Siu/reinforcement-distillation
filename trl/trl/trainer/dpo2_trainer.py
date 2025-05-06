@@ -1272,27 +1272,27 @@ class DPOTrainer(Trainer):
                 labels = labels[:, -logits_to_keep:]
                 loss_mask = loss_mask[:, -logits_to_keep:]
 
-        # --- START ENTROPY CALCULATION ---
-        # Calculate per-token entropy from logits
-        # Use the loss_mask that corresponds to the logits BEFORE alignment shifts if possible,
-        # or ensure the mask here aligns with the logits used for loss calculation.
-        # Assuming `loss_mask` aligns with the `logits` dimensions used for loss:
-        per_token_entropy = torch.distributions.Categorical(logits=logits).entropy() # Shape: [batch_size * 2, seq_len]
+        # # --- START ENTROPY CALCULATION ---
+        # # Calculate per-token entropy from logits
+        # # Use the loss_mask that corresponds to the logits BEFORE alignment shifts if possible,
+        # # or ensure the mask here aligns with the logits used for loss calculation.
+        # # Assuming `loss_mask` aligns with the `logits` dimensions used for loss:
+        # per_token_entropy = torch.distributions.Categorical(logits=logits).entropy() # Shape: [batch_size * 2, seq_len]
 
-        # Apply the loss mask (only consider entropy of completion tokens)
-        # Use .float() for multiplication if loss_mask is bool
-        masked_entropy = per_token_entropy * loss_mask.float()
+        # # Apply the loss mask (only consider entropy of completion tokens)
+        # # Use .float() for multiplication if loss_mask is bool
+        # masked_entropy = per_token_entropy * loss_mask.float()
 
-        # Calculate mean entropy per sequence over the masked tokens
-        # Clamp sum to avoid division by zero for sequences with no completion tokens (shouldn't happen in DPO)
-        sum_masked_entropy = masked_entropy.sum(dim=-1)
-        num_loss_tokens = loss_mask.sum(dim=-1).clamp(min=1).float()
-        mean_entropy_per_sequence = sum_masked_entropy / num_loss_tokens # Shape: [batch_size * 2]
+        # # Calculate mean entropy per sequence over the masked tokens
+        # # Clamp sum to avoid division by zero for sequences with no completion tokens (shouldn't happen in DPO)
+        # sum_masked_entropy = masked_entropy.sum(dim=-1)
+        # num_loss_tokens = loss_mask.sum(dim=-1).clamp(min=1).float()
+        # mean_entropy_per_sequence = sum_masked_entropy / num_loss_tokens # Shape: [batch_size * 2]
 
-        # Split into chosen and rejected
-        chosen_mean_entropy = mean_entropy_per_sequence[:num_examples]
-        rejected_mean_entropy = mean_entropy_per_sequence[num_examples:]
-        # --- END ENTROPY CALCULATION ---
+        # # Split into chosen and rejected
+        # chosen_mean_entropy = mean_entropy_per_sequence[:num_examples]
+        # rejected_mean_entropy = mean_entropy_per_sequence[num_examples:]
+        # # --- END ENTROPY CALCULATION ---
 
         if logits.shape[:2] != labels.shape[:2]:
             # for llava, the returned logits include the image tokens (placed before the text tokens)
@@ -1352,36 +1352,44 @@ class DPOTrainer(Trainer):
             # and the second half to the rejected tokens.
             # To find the start of the rejected tokens, we look for the num_examples+1-th zero in pos_id.
             split_idx = (position_ids == 0).nonzero(as_tuple=True)[1][num_examples]
-            # --- Optimized Mean Calculation for Padding-Free ---
+            # --- NEW Optimized Mean Calculation for Padding-Free (v2) ---
             # Chosen part
-            chosen_logits_part = logits[0, :split_idx]         # Shape [split_idx, vocab_size]
-            chosen_mask_part = loss_mask[0, :split_idx]       # Shape [split_idx]
-            num_chosen_tokens = chosen_mask_part.sum()        # Scalar count
+            chosen_logits_part = logits[0, :split_idx]      # Shape [split_idx, vocab_size]
+            chosen_mask_part = loss_mask[0, :split_idx]    # Shape [split_idx]
+            num_chosen_tokens = chosen_mask_part.sum()     # Scalar count
+
             if num_chosen_tokens > 0:
-                # Mask logits directly (multiply by 0 or 1) without creating large intermediate tensor
-                # Expand mask to broadcast: [split_idx, 1]
-                masked_chosen_logits = chosen_logits_part * chosen_mask_part.unsqueeze(-1).to(chosen_logits_part.dtype)
-                # Sum all elements where mask was true
-                sum_chosen_logits = masked_chosen_logits.sum()
-                # Total number of elements contributing to the sum = num_tokens * vocab_size
-                total_chosen_elements = num_chosen_tokens * chosen_logits_part.shape[-1]
-                # Avoid division by zero if total_chosen_elements is 0 (e.g., vocab_size=0?)
+                # 1. Sum logits over the vocab dimension FIRST
+                sum_over_vocab_chosen = chosen_logits_part.sum(dim=-1) # Shape [split_idx] - MUCH SMALLER!
+                # 2. Apply the mask to this smaller tensor and sum
+                # Ensure mask is same dtype for multiplication
+                sum_chosen_logits = torch.sum(sum_over_vocab_chosen * chosen_mask_part.to(sum_over_vocab_chosen.dtype)) # Scalar sum
+
+                # 3. Calculate total number of elements that contributed to the sum
+                total_chosen_elements = num_chosen_tokens * chosen_logits_part.shape[-1] # vocab_size
+                # 4. Calculate mean
                 mean_chosen_logits = sum_chosen_logits / total_chosen_elements.clamp(min=1)
-            else: # Handle case where there are no chosen tokens in the mask
+            else:
                 mean_chosen_logits = torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
 
-            # Rejected part
-            rejected_logits_part = logits[0, split_idx:]      # Shape [sum_seq_len - split_idx, vocab_size]
-            rejected_mask_part = loss_mask[0, split_idx:]   # Shape [sum_seq_len - split_idx]
-            num_rejected_tokens = rejected_mask_part.sum()    # Scalar count
+            # Rejected part - Apply the same logic
+            rejected_logits_part = logits[0, split_idx:]   # Shape [sum_seq_len - split_idx, vocab_size]
+            rejected_mask_part = loss_mask[0, split_idx:]# Shape [sum_seq_len - split_idx]
+            num_rejected_tokens = rejected_mask_part.sum() # Scalar count
+
             if num_rejected_tokens > 0:
-                masked_rejected_logits = rejected_logits_part * rejected_mask_part.unsqueeze(-1).to(rejected_logits_part.dtype)
-                sum_rejected_logits = masked_rejected_logits.sum()
-                total_rejected_elements = num_rejected_tokens * rejected_logits_part.shape[-1]
+                # 1. Sum over vocab dimension
+                sum_over_vocab_rejected = rejected_logits_part.sum(dim=-1) # Shape [sum_seq_len - split_idx]
+                # 2. Apply mask and sum
+                sum_rejected_logits = torch.sum(sum_over_vocab_rejected * rejected_mask_part.to(sum_over_vocab_rejected.dtype)) # Scalar sum
+
+                # 3. Total contributing elements
+                total_rejected_elements = num_rejected_tokens * rejected_logits_part.shape[-1] # vocab_size
+                # 4. Calculate mean
                 mean_rejected_logits = sum_rejected_logits / total_rejected_elements.clamp(min=1)
             else:
                 mean_rejected_logits = torch.tensor(0.0, device=logits.device, dtype=logits.dtype)
-            # --- End Optimized Mean Calculation ---
+            # --- End NEW Optimized Mean Calculation ---
         else:
             mean_chosen_logits = logits[:num_examples][loss_mask[:num_examples]].mean()
             mean_rejected_logits = logits[num_examples:][loss_mask[num_examples:]].mean()
@@ -1389,10 +1397,10 @@ class DPOTrainer(Trainer):
         output["mean_chosen_logits"] = mean_chosen_logits
         output["mean_rejected_logits"] = mean_rejected_logits
 
-        # --- Add Entropy to Output ---
-        output["chosen_mean_entropy"] = chosen_mean_entropy
-        output["rejected_mean_entropy"] = rejected_mean_entropy
-        # --- End Add Entropy ---
+        # # --- Add Entropy to Output ---
+        # output["chosen_mean_entropy"] = chosen_mean_entropy
+        # output["rejected_mean_entropy"] = rejected_mean_entropy
+        # # --- End Add Entropy ---
 
         # Added by Gemini, not verified
         output["logits"] = logits # Shape: [batch_size * 2, seq_len, vocab_size]
@@ -1420,10 +1428,10 @@ class DPOTrainer(Trainer):
         chosen_logps = model_output["chosen_logps"]
         rejected_logps = model_output["rejected_logps"]
 
-        # --- Retrieve Entropy ---
-        chosen_mean_entropy = model_output["chosen_mean_entropy"]
-        rejected_mean_entropy = model_output["rejected_mean_entropy"]
-        # --- End Retrieve Entropy ---
+        # # --- Retrieve Entropy ---
+        # chosen_mean_entropy = model_output["chosen_mean_entropy"]
+        # rejected_mean_entropy = model_output["rejected_mean_entropy"]
+        # # --- End Retrieve Entropy ---
 
         # --- Get Reference Logps ---
         if "ref_chosen_logps" in batch and "ref_rejected_logps" in batch:
@@ -1491,10 +1499,10 @@ class DPOTrainer(Trainer):
         metrics[f"{prefix}logits/chosen"] = self.accelerator.gather_for_metrics(model_output["mean_chosen_logits"]).detach().mean().item()
         metrics[f"{prefix}logits/rejected"] = self.accelerator.gather_for_metrics(model_output["mean_rejected_logits"]).detach().mean().item()
 
-        # --- Log Mean Entropy ---
-        metrics[f"{prefix}entropy/chosen"] = self.accelerator.gather_for_metrics(chosen_mean_entropy).mean().item()
-        metrics[f"{prefix}entropy/rejected"] = self.accelerator.gather_for_metrics(rejected_mean_entropy).mean().item()
-        # --- End Log Mean Entropy ---
+        # # --- Log Mean Entropy ---
+        # metrics[f"{prefix}entropy/chosen"] = self.accelerator.gather_for_metrics(chosen_mean_entropy).mean().item()
+        # metrics[f"{prefix}entropy/rejected"] = self.accelerator.gather_for_metrics(rejected_mean_entropy).mean().item()
+        # # --- End Log Mean Entropy ---
 
         # --- NEW: Detailed Statistics Logging ---
         gathered_metrics = {}
@@ -1554,10 +1562,10 @@ class DPOTrainer(Trainer):
         if neg_weights is not None:
              gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(neg_weights), f"{prefix}neg_weights"))
 
-        # --- Add Detailed Entropy Stats ---
-        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(chosen_mean_entropy), f"{prefix}entropy/chosen_stats"))
-        gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(rejected_mean_entropy), f"{prefix}entropy/rejected_stats"))
-        # --- End Add Detailed Entropy Stats ---
+        # # --- Add Detailed Entropy Stats ---
+        # gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(chosen_mean_entropy), f"{prefix}entropy/chosen_stats"))
+        # gathered_metrics.update(self._compute_stats(self.accelerator.gather_for_metrics(rejected_mean_entropy), f"{prefix}entropy/rejected_stats"))
+        # # --- End Add Detailed Entropy Stats ---
         
         # Update metrics dict
         metrics.update(gathered_metrics)
