@@ -120,7 +120,37 @@ bash recipes/redi/redi_1_08_1e-6/eval.sh
 
 ## Evaluation
 
-For comparison with other methods, we use DeepScalerR for evaluation and will be releasing evaluation code very soon. Stay tuned!
+For comparison with other methods, we use [rllm](https://github.com/agentica-project/rllm) (formerly DeepScaleR) for evaluation.
+
+<details>
+<summary>Detailed evaluation instructions</summary>
+
+You may first follow instructions on [rllm project](rllm/README.md) to install a seperate environment. Then:
+
+1. The first step is that we need to force `thinking` for our models (also standard practice for official Deepseek models). To do so, navigate to `tokenizer_config.json` and modify the template. The new template should look like
+    <details>
+    <summary>Updated chat template</summary>
+
+    ```
+      "chat_template": "{%- if tools %}\n    {{- '<|im_start|>system\\n' }}\n    {%- if messages[0]['role'] == 'system' %}\n        {{- messages[0]['content'] }}\n    {%- else %}\n        {{- 'Please reason step by step, and put your final answer within \\\\boxed{}.' }}\n    {%- endif %}\n    {{- \"\\n\\n# Tools\\n\\nYou may call one or more functions to assist with the user query.\\n\\nYou are provided with function signatures within <tools></tools> XML tags:\\n<tools>\" }}\n    {%- for tool in tools %}\n        {{- \"\\n\" }}\n        {{- tool | tojson }}\n    {%- endfor %}\n    {{- \"\\n</tools>\\n\\nFor each function call, return a json object with function name and arguments within <tool_call></tool_call> XML tags:\\n<tool_call>\\n{\\\"name\\\": <function-name>, \\\"arguments\\\": <args-json-object>}\\n</tool_call><|im_end|>\\n\" }}\n{%- else %}\n    {%- if messages[0]['role'] == 'system' %}\n        {{- '<|im_start|>system\\n' + messages[0]['content'] + '<|im_end|>\\n' }}\n    {%- else %}\n        {{- '<|im_start|>system\\nPlease reason step by step, and put your final answer within \\\\boxed{}.<|im_end|>\\n' }}\n    {%- endif %}\n{%- endif %}\n{%- for message in messages %}\n    {%- if (message.role == \"user\") or (message.role == \"system\" and not loop.first) or (message.role == \"assistant\" and not message.tool_calls) %}\n        {{- '<|im_start|>' + message.role + '\\n' + message.content + '<|im_end|>' + '\\n' }}\n    {%- elif message.role == \"assistant\" %}\n        {{- '<|im_start|>' + message.role }}\n        {%- if message.content %}\n            {{- '\\n' + message.content }}\n        {%- endif %}\n        {%- for tool_call in message.tool_calls %}\n            {%- if tool_call.function is defined %}\n                {%- set tool_call = tool_call.function %}\n            {%- endif %}\n            {{- '\\n<tool_call>\\n{\"name\": \"' }}\n            {{- tool_call.name }}\n            {{- '\", \"arguments\": ' }}\n            {{- tool_call.arguments | tojson }}\n            {{- '}\\n</tool_call>' }}\n        {%- endfor %}\n        {{- '<|im_end|>\\n' }}\n    {%- elif message.role == \"tool\" %}\n        {%- if (loop.index0 == 0) or (messages[loop.index0 - 1].role != \"tool\") %}\n            {{- '<|im_start|>user' }}\n        {%- endif %}\n        {{- '\\n<tool_response>\\n' }}\n        {{- message.content }}\n        {{- '\\n</tool_response>' }}\n        {%- if loop.last or (messages[loop.index0 + 1].role != \"tool\") %}\n            {{- '<|im_end|>\\n' }}\n        {%- endif %}\n    {%- endif %}\n{%- endfor %}\n{%- if add_generation_prompt %}\n    {{- '<|im_start|>assistant<think>\\n' }}\n{%- endif %}\n"
+
+    ```
+    </details>
+2. Use the command below
+    ```
+    cd rllm
+
+    bash scripts/eval/eval_model.sh --model ${MODEL_PATH} \
+    --datasets aime math amc minerva olympiad_bench \
+    --data-split data2 \
+    --output-dir ${OUTPUT_DIR} \
+    --tp 1 \
+    --n 16 \
+    --max-length 30720
+    ```
+    Note that we slightly modify the evaluation prompt to align with [Open-R1](https://github.com/huggingface/open-r1), but in our experiments this does not introduce too large a diff.
+  
+</details>
 
 | Model             | AIME24 | AMC23 | MATH500 | Minerva | Olympiad Bench | Avg. |
 |-------------------|------|-------|--------|------------|----------------|------|
