@@ -16,6 +16,12 @@ from verl.utils.reward_score.math import last_boxed_only_string, remove_boxed
 from rllm.data.utils import load_dataset
 from rllm.data.dataset_types import TrainDataset, TestDataset
 
+MATH_QUERY_TEMPLATE = """
+Solve the following math problem efficiently and clearly.  The last line of your response should be of the following format: 'Therefore, the final answer is: $\\boxed{{ANSWER}}$. I hope it is correct' (without quotes) where ANSWER is just the final number or expression that solves the problem. Think step by step before answering.
+
+{Question}
+""".strip()
+
 
 def extract_solution(solution_str: str) -> str:
     """Extract the final boxed solution from a solution string.
@@ -38,13 +44,17 @@ def make_map_fn(split: str):
     Returns:
         Function that processes individual dataset examples
     """
-    def process_fn(example: Dict[str, Any], idx: int, instruction: str = None) -> Optional[Dict[str, Any]]:
+    def process_fn(example: Dict[str, Any], idx: int, instruction: str = None, use_math_template: bool = False) -> Optional[Dict[str, Any]]:
         question = example.pop('problem')
         
-        if instruction is None:
-            instruction = "Let's think step by step and output the final answer within \\boxed{}."
-        
-        question = f"{question} {instruction}"
+        if not use_math_template:
+            if instruction is None:
+                instruction = "Let's think step by step and output the final answer within \\boxed{}."
+
+            question = f"{question} {instruction}"
+        else:
+            question = MATH_QUERY_TEMPLATE.format(Question=question)
+            
         answer = example.pop('answer')
 
         data = {
@@ -73,6 +83,9 @@ if __name__ == '__main__':
                        help='Local directory to save processed datasets')
     parser.add_argument('--hdfs_dir', default=None,
                        help='Optional HDFS directory to copy datasets to')
+    parser.add_argument('--use_math_template', action='store_true', default=False, 
+                        help='Description of when to use the special math template')
+
     args = parser.parse_args()
 
     local_dir = args.local_dir
@@ -101,17 +114,20 @@ if __name__ == '__main__':
         test_data: List[Dict[str, Any]] = []
         process_fn = make_map_fn('test')
         for idx, example in enumerate(test_data_list):
-            processed_example = process_fn(example, idx)
+            processed_example = process_fn(example, idx, use_math_template=args.use_math_template)
             if processed_example is not None:
                 test_data.append(processed_example)
-
+        
+        
         dataset_name = test_dataset.value.lower()
         test_df = pd.DataFrame(test_data)
         test_df.to_parquet(os.path.join(local_dir, f'{dataset_name}.parquet'))
         print(f"{dataset_name} test data size:", len(test_data))
+        print(f"test data: {test_data[0]}")
 
     # Save training dataset
     print("train data size:", len(train_data))
+    print(f"train data: {train_data[0]}")
     train_df = pd.DataFrame(train_data)
     train_df.to_parquet(os.path.join(local_dir, 'deepscaler_train.parquet'))
 
@@ -119,3 +135,6 @@ if __name__ == '__main__':
     if hdfs_dir is not None:
         makedirs(hdfs_dir)
         copy(src=local_dir, dst=hdfs_dir)
+        
+        
+# python scripts/data/deepscaler_dataset.py --use_math_template --local_dir rllm/data2
