@@ -204,8 +204,10 @@ def main(config):
     pass_at_n = passes / total
     pass_at_1 = np.mean(total_scores)
 
+    std_sample = np.std(np.mean(np.array(total_scores), axis=0))
+    sem_p1 = std_sample / np.sqrt(n_samples)
     # Save metrics to CSV
-    csv_path = os.path.join(output_dir, 'pass.csv')
+    csv_path = os.path.join(output_dir, 'pass_with_sem.csv')
     
     # Prepare the row data
     # Extract the dataset name from the path
@@ -214,7 +216,9 @@ def main(config):
         'model_path': config.model.path,
         'dataset': dataset_name,
         'pass@1': pass_at_1,
-        f'pass@{n_samples}': pass_at_n
+        f'pass@{n_samples}': pass_at_n,
+        'std': std_sample,
+        'sem': sem_p1,
     }
 
     # Check if file exists
@@ -236,7 +240,8 @@ def main(config):
     # Convert boolean values to 0.0 or 1.0
     total_scores = [[1.0 if val else 0.0 for val in score_list] for score_list in total_scores]
     # Save the scores to results.json
-    results_path = os.path.join(output_dir, 'results.json')
+    # results_path = os.path.join(output_dir, 'results.json')
+    results_path = config.data.output_path.replace(".parquet", ".json")
     import json
     with open(results_path, 'w') as f:
         json.dump(total_scores, f)
