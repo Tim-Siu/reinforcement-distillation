@@ -21,20 +21,16 @@ def get_tokenizer(model_path, trust_remote_code):
         try:
             tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=trust_remote_code, padding_side='left')
             if tokenizer.pad_token is None:
-                tokenizer.pad_token = tokenizer.eos_token # Common practice
+                tokenizer.pad_token = tokenizer.eos_token
             tokenizer_cache[model_path] = tokenizer
             
-            # Attempt to get chat template string from tokenizer
             if hasattr(tokenizer, 'chat_template') and tokenizer.chat_template:
                 chat_template_cache[model_path] = tokenizer.chat_template
             elif hasattr(tokenizer, 'default_chat_template') and tokenizer.default_chat_template:
                 chat_template_cache[model_path] = tokenizer.default_chat_template
-            else: # Fallback if no template found on tokenizer
+            else:
                 print(f"Warning: No chat_template attribute found for tokenizer {model_path}. May affect formatting if not Qwen-like.")
-                # For Qwen-like models, this might be okay if the apply_chat_template method works without it.
-                # If you have custom jinja files and want to use them here too, you'd load them.
-                # For this script, we primarily rely on tokenizer.apply_chat_template.
-                chat_template_cache[model_path] = None # Signal that we rely on internal apply_chat_template logic
+                chat_template_cache[model_path] = None
         except Exception as e:
             print(f"Error loading tokenizer for {model_path}: {e}")
             return None
@@ -47,6 +43,9 @@ def get_sequence_analytics(model, tokenizer, messages_list, device):
         "token_logps": None,
         "token_mean_logits": None,
         "token_texts": None,
+        "predicted_token_ids": None, ### ADDED ###
+        "predicted_token_texts": None, ### ADDED ###
+        "predicted_token_logps": None, ### ADDED ###
         "assistant_token_indices_in_full": None,
         "error": None
     }
@@ -60,15 +59,10 @@ def get_sequence_analytics(model, tokenizer, messages_list, device):
 
         templated_context_str = tokenizer.apply_chat_template(
             context_messages,
-            add_generation_prompt=True, # Important for correct prompt formatting
+            add_generation_prompt=True,
             tokenize=False
         )
-        # Tokenize context. Ensure add_special_tokens behavior is as expected.
-        # If apply_chat_template already adds BOS for the model, add_special_tokens=False might be preferred.
-        # However, for robustness, True is often used, assuming tokenizer handles duplicates or its absence.
         context_tokens = tokenizer(templated_context_str, return_tensors="pt", add_special_tokens=True)
-        
-        # Tokenize assistant's response text *without* special tokens or template wrappers.
         assistant_tokens = tokenizer(assistant_response_text, return_tensors="pt", add_special_tokens=False)
 
         context_input_ids = context_tokens.input_ids.to(device)
@@ -79,86 +73,68 @@ def get_sequence_analytics(model, tokenizer, messages_list, device):
             return results
 
         full_input_ids = torch.cat([context_input_ids, assistant_input_ids], dim=1)
-        
         labels = full_input_ids.clone()
-        labels[:, :context_input_ids.shape[1]] = -100 # Mask out context tokens
+        labels[:, :context_input_ids.shape[1]] = -100
 
         with torch.no_grad():
-            outputs = model(input_ids=full_input_ids, labels=labels) # attention_mask can often be inferred for unpadded single sequences
+            outputs = model(input_ids=full_input_ids, labels=labels)
             logits = outputs.logits
 
-        # Shift logits and labels for next token prediction
-        # Logits for token i predict token i+1. Labels for token i are token i.
-        # So, logits for [0...seq_len-2] predict labels [1...seq_len-1]
         shifted_logits = logits[..., :-1, :].contiguous()
-        shifted_labels = labels[..., 1:].contiguous() # These are the target token IDs
+        shifted_labels = labels[..., 1:].contiguous()
         
-        valid_labels_mask = (shifted_labels != -100) # Mask for actual assistant tokens
+        valid_labels_mask = (shifted_labels != -100)
         if not valid_labels_mask.any():
             results["error"] = "No valid (non-masked) assistant tokens to analyze."
             return results
 
-        actual_assistant_labels = shifted_labels[valid_labels_mask] # True token IDs of the assistant
-        
+        actual_assistant_labels = shifted_labels[valid_labels_mask]
         log_probs_full_vocab = torch.nn.functional.log_softmax(shifted_logits, dim=-1)
         
-        # !!! THIS IS THE FIX !!!
-        # Create a temporary version of shifted_labels for torch.gather
-        # Replace -100 with a valid index (e.g., 0). These gathered values for originally -100 positions
-        # will be ignored later by `valid_labels_mask`.
         shifted_labels_for_gather = shifted_labels.clone()
-        shifted_labels_for_gather[shifted_labels == -100] = 0 # Or any valid token_id, e.g., tokenizer.pad_token_id if available and non-negative
+        shifted_labels_for_gather[shifted_labels == -100] = 0
         
-        # Gather the logp of the target tokens using the modified labels
         token_logps_all_positions = torch.gather(log_probs_full_vocab, -1, shifted_labels_for_gather.unsqueeze(-1)).squeeze(-1)
-        
-        # Filter to get logps only for the assistant's tokens
         assistant_token_logps = token_logps_all_positions[valid_labels_mask]
 
         results["normalized_logp"] = assistant_token_logps.mean().item() if assistant_token_logps.numel() > 0 else 0.0
         results["token_logps"] = assistant_token_logps.cpu().tolist()
         
-        # For entropy and mean logits, we need logits corresponding to assistant tokens
-        # These are the logits that predicted the assistant's tokens
-        assistant_logits = shifted_logits[valid_labels_mask] # Shape: [num_assistant_tokens, vocab_size]
+        assistant_logits = shifted_logits[valid_labels_mask]
         
-        if assistant_logits.numel() > 0 and assistant_logits.shape[0] > 0: # Ensure non-empty tensor
+        if assistant_logits.numel() > 0 and assistant_logits.shape[0] > 0:
             probs_dist = torch.softmax(assistant_logits, dim=-1)
-            # Use log_softmax for numerical stability in entropy calculation
             log_probs_dist = torch.log_softmax(assistant_logits, dim=-1) 
             token_entropies = -torch.sum(probs_dist * log_probs_dist, dim=-1)
             results["avg_token_entropy"] = token_entropies.mean().item()
-            results["token_mean_logits"] = assistant_logits.mean(dim=-1).cpu().tolist() # Mean over vocab dimension
+            results["token_mean_logits"] = assistant_logits.mean(dim=-1).cpu().tolist()
+
+            ### ADDED/MODIFIED BLOCK for predicted tokens ###
+            # Get the log-probabilities of the tokens the model *would have* predicted (argmax)
+            max_logprobs_predicted, predicted_token_ids_tensor = torch.max(log_probs_dist, dim=-1)
+            
+            results["predicted_token_ids"] = predicted_token_ids_tensor.cpu().tolist()
+            results["predicted_token_texts"] = tokenizer.convert_ids_to_tokens(predicted_token_ids_tensor.cpu().numpy())
+            results["predicted_token_logps"] = max_logprobs_predicted.cpu().tolist()
+            ### END ADDED/MODIFIED BLOCK ###
         else:
             results["avg_token_entropy"] = 0.0
             results["token_mean_logits"] = []
+            results["predicted_token_ids"] = [] ### ADDED ###
+            results["predicted_token_texts"] = [] ### ADDED ###
+            results["predicted_token_logps"] = [] ### ADDED ###
+
 
         results["token_texts"] = tokenizer.convert_ids_to_tokens(actual_assistant_labels.cpu().numpy())
         
-        # Calculate indices relative to the start of full_input_ids
-        # The first token label corresponds to full_input_ids[1], its logit is from shifted_logits[0]
-        # So assistant tokens start at context_input_ids.shape[1] in full_input_ids
-        # The labels for these start at (context_input_ids.shape[1] - 1) in shifted_labels if non-empty context
-        # Or more simply, find where valid_labels_mask is true.
-        
-        # The `actual_assistant_labels` are taken from `shifted_labels`.
-        # `shifted_labels` corresponds to `full_input_ids[1:]`.
-        # The first assistant token is `full_input_ids[context_input_ids.shape[1]]`.
-        # Its label in `shifted_labels` is at index `context_input_ids.shape[1] - 1`.
-        
-        # Let's provide the indices of the assistant tokens within the `full_input_ids`
         start_idx_in_full_ids_for_assistant_tokens = context_input_ids.shape[1]
         end_idx_in_full_ids_for_assistant_tokens = full_input_ids.shape[1]
         results["assistant_token_indices_in_full"] = list(range(start_idx_in_full_ids_for_assistant_tokens, end_idx_in_full_ids_for_assistant_tokens))
 
-
     except Exception as e:
         results["error"] = str(e)
-        # import traceback # Uncomment for debugging
-        # traceback.print_exc() # Uncomment for debugging
         print(f"Error in get_sequence_analytics for input (first message role/content): {messages_list[0]['role']}/{messages_list[0]['content'][:50]}... Error: {e}")
     return results
-
 
 def main(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -177,7 +153,7 @@ def main(args):
     except FileNotFoundError:
         print(f"Warning: {INPUT_GENERATIONS_FILE} not found. Only analyzing training samples from {INPUT_SAMPLES_FILE}.")
 
-    analysis_output_file = open(OUTPUT_ANALYSIS_FILE, "w")
+    analysis_output_file = open(OUTPUT_ANALYSIS_FILE, "w") ### MODIFIED ### to use the new output filename
 
     for ckpt_name, model_path in MODEL_CHECKPOINTS.items():
         if model_path.startswith("/path/to/your"):
@@ -190,16 +166,18 @@ def main(args):
                 model_path, 
                 torch_dtype=torch.bfloat16, 
                 trust_remote_code=args.trust_remote_code,
-                attn_implementation='flash_attention_2',
+                attn_implementation='flash_attention_2' if torch.cuda.is_available() and hasattr(torch.nn.functional, 'scaled_dot_product_attention') else 'sdpa', # Conditional FA2
             ).to(device).eval()
             tokenizer = get_tokenizer(model_path, args.trust_remote_code)
             if tokenizer is None: 
                 print(f"Could not load tokenizer for {model_path}, skipping checkpoint.")
-                del model # cleanup
+                if 'model' in locals(): del model 
                 if torch.cuda.is_available(): torch.cuda.empty_cache()
                 continue
         except Exception as e:
             print(f"Error loading model {model_path}: {e}. Skipping checkpoint.")
+            if 'model' in locals(): del model
+            if torch.cuda.is_available(): torch.cuda.empty_cache()
             continue
 
         # 1. Analyze Training Samples
@@ -211,7 +189,7 @@ def main(args):
             if sample.get("chosen_full_conversation") and sample.get("chosen_assistant_text"):
                 chosen_metrics = get_sequence_analytics(model, tokenizer, sample["chosen_full_conversation"], device)
                 analysis_output_file.write(json.dumps({
-                    "sample_id": sample["sample_id"], # Changed from sample_uuid
+                    "sample_id": sample["sample_id"],
                     "original_item_identifier": sample["original_item_identifier"],
                     "checkpoint_name": ckpt_name,
                     "sample_type": "train_chosen",
@@ -223,7 +201,7 @@ def main(args):
             if sample.get("rejected_full_conversation") and sample.get("rejected_assistant_text"):
                 rejected_metrics = get_sequence_analytics(model, tokenizer, sample["rejected_full_conversation"], device)
                 analysis_output_file.write(json.dumps({
-                    "sample_id": sample["sample_id"], # Changed
+                    "sample_id": sample["sample_id"],
                     "original_item_identifier": sample["original_item_identifier"],
                     "checkpoint_name": ckpt_name,
                     "sample_type": "train_rejected",
@@ -238,24 +216,22 @@ def main(args):
             if gen_sample["checkpoint_name"] != ckpt_name:
                 continue
 
-            # Construct messages list for the generated sample
-            # VLLM output `prompt_text_raw` is the original user prompt
             messages = [
                 {"role": "user", "content": gen_sample["prompt_text_raw"]},
                 {"role": "assistant", "content": gen_sample["generated_assistant_text"]}
             ]
             
-            if not gen_sample["generated_assistant_text"]: # Skip if VLLM produced empty response
+            if not gen_sample["generated_assistant_text"]:
                 print(f"Skipping empty generation for sample_id {gen_sample['sample_id']}, ckpt {ckpt_name}")
                 continue
 
             generated_metrics = get_sequence_analytics(model, tokenizer, messages, device)
             analysis_output_file.write(json.dumps({
-                "sample_id": gen_sample["sample_id"], # This is the hash ID of the original test prompt
+                "sample_id": gen_sample["sample_id"],
                 "checkpoint_name": ckpt_name,
                 "chat_template_name": gen_sample.get("chat_template_name", "N/A"),
                 "sample_type": "test_generated",
-                "prompt_text": gen_sample["prompt_text_raw"], # Log the raw prompt
+                "prompt_text": gen_sample["prompt_text_raw"],
                 "text_analyzed": gen_sample["generated_assistant_text"],
                 **generated_metrics
             }) + "\n")
