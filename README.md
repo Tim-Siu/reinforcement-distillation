@@ -3,37 +3,37 @@
 # Reinforcement Distillation
 
 <div>
-Learning from Off-policy Negative Data 🌟
+Harnessing Negative Signals:
+
+**Reinforcement Distillation** from Teacher Data for LLM Reasoning
 </div>
 </div>
 <div>
-<br>
 
 <div align="center">
 
-[![Github](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white
-)](https://github.com/Tim-Siu/reinforcement-distillation)
-[![Notion](https://img.shields.io/badge/Notion-000000?style=for-the-badge&logo=notion&logoColor=white
-)](https://shuyaoxu.notion.site/redi)
-
+[![arxiv](https://img.shields.io/badge/arXiv-2505.123-b31b1b?style=for-the-badge&logo=arxiv&logoColor=white)](full_paper.pdf)
+[![Github](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Tim-Siu/reinforcement-distillation)
+[![Notion](https://img.shields.io/badge/Notion-000000?style=for-the-badge&logo=notion&logoColor=white)](https://shuyaoxu.notion.site/redi)
 </div>
 
+<div align="center">
+<img src="figures/redi_teaser.png" width="80%" />
 </div>
 
 ## Overview
-We propose **Reinforcement Distillation (REDI)**, an efficient approach for large language models (LLMs) post-training using offline RL and distilled data. Our **`REDI-1.5B-Preview`** model, fine-tuned from **`Qwen2.5-Math-1.5B`** using a curated 78k subset of the OpenR1 dataset (leveraging both positive and negative examples), achieves **83.1% on MATH-500 (pass@1)**. It performs comparably to or better than DeepSeek-R1-Distill-Qwen-1.5B on several math benchmarks, establishing a new state-of-the-art for 1.5B models fine-tuned offline using openly available distilled data.
+Recent advances in model distillation demonstrate that data from advanced reasoning models (e.g., DeepSeek-R1, OpenAI's o1) can effectively transfer complex reasoning abilities to smaller, efficient student models. However, standard practices employ rejection sampling, discarding incorrect reasoning examples---valuable, yet often underutilized data. This paper addresses the critical question: 
 
-A key finding is that **asymmetric weighting** of positive and negative sample gradients during optimization significantly enhances training stability and performance, allowing us to surpass DPO/SimPO without KL regularization.
+*How can both positive and negative distilled reasoning traces be effectively leveraged to maximize LLM reasoning performance in an offline setting?*
 
+ To this end, We propose **Re**inforcement **Di**stillation (**REDI**), a two-stage framework. Checkout our [paper](full_paper.pdf) for details on our methods.
 
-<div align="center">
-<img src="figures/redi_comparison.svg" width="80%" />
+ Notably, the **Qwen-REDI-1.5B** model, post-trained on just 131k positive and negative examples from the open Open-R1 dataset, achieves an 83.1% score on MATH-500 (pass@1). Its performance matches or surpasses that of DeepSeek-R1-Distill-Qwen-1.5 (a model post-trained on 800k proprietary data) across various mathematical reasoning benchmarks, establishing a **new state-of-the-art for 1.5B models post-trained offline with openly available data**.
 
-<sub>*For more details, see our [blog post](https://shuyaoxu.notion.site/redi).*</sub>
-</div>
 
 
 ## News
+- **[2025/05/31]** Our paper is out! Check it out on [arXiv](full_paper.pdf).
 - **[2025/04/30]** ⬆️ An In-Depth Blog Post on our [Training Recipe and Insights](https://shuyaoxu.notion.site/redi)
 - **[2025/04/30]** REDI codebase is released. Try it out!
 
