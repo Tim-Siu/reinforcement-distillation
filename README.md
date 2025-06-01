@@ -12,7 +12,7 @@ Harnessing Negative Signals:
 
 <div align="center">
 
-[![arxiv](https://img.shields.io/badge/arXiv-2505.123-b31b1b?style=for-the-badge&logo=arxiv&logoColor=white)](full_paper.pdf)
+[![arxiv](https://img.shields.io/badge/arXiv-2505.tbd-b31b1b?style=for-the-badge&logo=arxiv&logoColor=white)](full_paper.pdf)
 [![Github](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Tim-Siu/reinforcement-distillation)
 [![Notion](https://img.shields.io/badge/Notion-000000?style=for-the-badge&logo=notion&logoColor=white)](https://shuyaoxu.notion.site/redi)
 </div>
@@ -30,6 +30,18 @@ Recent advances in model distillation demonstrate that data from advanced reason
 
  Notably, the **Qwen-REDI-1.5B** model, post-trained on just 131k positive and negative examples from the open Open-R1 dataset, achieves an 83.1% score on MATH-500 (pass@1). Its performance matches or surpasses that of DeepSeek-R1-Distill-Qwen-1.5 (a model post-trained on 800k proprietary data) across various mathematical reasoning benchmarks, establishing a **new state-of-the-art for 1.5B models post-trained offline with openly available data**.
 
+## Evaluation Results
+
+**Model Performance Comparison (pass@1 over 16 samples) across reasoning benchmarks.** ^*Officially reported pass@1 results. Results for `Qwen2.5-Math-1.5B` are from [EMPO](https://arxiv.org/html/2504.05812v1).
+
+| Model                               | MATH-500        | AIME24          | AMC23           | Minerva         | OlympiadBench   | Avg.            |
+| :---------------------------------- | :-------------: | :-------------: | :-------------: | :-------------: | :-------------: | :-------------: |
+| `Qwen2.5-Math-1.5B (Base)`                 | 52.2            | 10.0            | 42.5            | 10.7            | 25.2            | 28.1            |
+| `Qwen-SFT-1.5B-5ep (SFT)`  | 80.4       | 21.9       | 57.5       | 27.5       | 41.5       | 45.8       |
+| **`Qwen-REDI-1.5B (Ours)`**                | 83.1       | 28.1       | **62.4**   | 28.8       | **45.2**   | **49.5**   |
+| ---                                 | ---             | ---             | ---             | ---             | ---             | ---             |
+| `Qwen2.5-Math-1.5B-Instruct`^*      | 75.8            | 10.0            | 60.0            | **29.4**        | 38.1            | 42.7            |
+| `DeepSeek-R1-Distill-Qwen-1.5B`     | **83.2**   | **28.3**   | 62.1       | 26.0       | 43.1       | 48.6       |
 
 
 ## News
@@ -122,13 +134,6 @@ bash recipes/redi/redi_1_08_1e-6/eval.sh
 
 For comparison with other methods, we use DeepScalerR for evaluation and will be releasing evaluation code very soon. Stay tuned!
 
-| Model             | AIME24 | AMC23 | MATH500 | Minerva | Olympiad Bench | Avg. |
-|-------------------|------|-------|--------|------------|----------------|------|
-| Deepseek-R1-Distill-Qwen-1.5b | 28.3 | 62.1  | 83.2   | 26.0       | 43.1           | 48.5 |
-| SimpleRL-Zero     | 4.2  | 35.0  | 59.0   | 20.2       | 21.0           | 27.9 |
-| LUFFY             | 15.2 | 46.8  | 79.4   | 26.5       | 42.4           | 42.1 |
-| REDI-SFT-1.5B      | 24.0 | 57.3  | 80.4   | 27.6       | 41.1           | 47.0 |
-| REDI-1.5B-Preview  | 28.1 | 62.4  | 83.1   | 28.8       | 45.2           | 49.5 |
 
 ## Acknowledgements
 
