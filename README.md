@@ -3,16 +3,16 @@
 # Reinforcement Distillation
 
 <div>
-Harnessing Negative Signals:
-
-**Reinforcement Distillation** from Teacher Data for LLM Reasoning
 </div>
 </div>
 <div>
 
 <div align="center">
 
-[![arxiv](https://img.shields.io/badge/arXiv-2505.tbd-b31b1b?style=for-the-badge&logo=arxiv&logoColor=white)](full_paper.pdf)
+> **Harnessing Negative Signals:<br> Reinforcement Distillation from Teacher Data for LLM Reasoning**<br>
+> [Shuyao Xu](https://tim-siu.github.io/), Cheng Peng, Jiangxuan Long, [Weidi Xu](https://wead-hsu.github.io/), [Wei Chu](https://weichu.github.io/), [Yuan Qi](https://ai3.fudan.edu.cn/info/1088/1494.htm)<br>
+
+[![arxiv](https://img.shields.io/badge/arXiv-2505.24850-b31b1b?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2505.24850)
 [![Github](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Tim-Siu/reinforcement-distillation)
 [![Notion](https://img.shields.io/badge/Notion-000000?style=for-the-badge&logo=notion&logoColor=white)](https://shuyaoxu.notion.site/redi)
 </div>
@@ -45,7 +45,7 @@ Recent advances in model distillation demonstrate that data from advanced reason
 
 
 ## News
-- **[2025/05/31]** Our paper is out! Check it out on [arXiv](full_paper.pdf).
+- **[2025/05/31]** Our paper is out! Check it out on [arXiv](https://arxiv.org/abs/2505.24850).
 - **[2025/04/30]** ⬆️ An In-Depth Blog Post on our [Training Recipe and Insights](https://shuyaoxu.notion.site/redi)
 - **[2025/04/30]** REDI codebase is released. Try it out!
 
@@ -144,13 +144,13 @@ We thank **Hugging Face** for the Open R1 dataset and libraries like `transforme
 If you find REDI useful in your research, please consider citing our work using the following BibTeX entry:
 
 ```bibtex
-@misc{xu2025redi,
-  author       = {Xu, Shuyao and Peng, Cheng and Long, Jiangxuan and Xu, Weidi},
-  title        = {Reinforcement Distillation: Learning from Off-policy Negative Data},
-  year         = {2025},
-  month        = {April},
-  howpublished = {Blog Post / Technical Report},
-  url          = {https://shuyaoxu.notion.site/redi},
-  note         = {Code available at \url{https://github.com/Tim-Siu/reinforcement-distillation}}
+@misc{xu2025harnessingnegativesignalsreinforcement,
+      title={Harnessing Negative Signals: Reinforcement Distillation from Teacher Data for LLM Reasoning}, 
+      author={Shuyao Xu and Cheng Peng and Jiangxuan Long and Weidi Xu and Wei Chu and Yuan Qi},
+      year={2025},
+      eprint={2505.24850},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2505.24850}, 
 }
 ```
