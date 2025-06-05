@@ -1,1 +1,1 @@
-accelerate launch --config_file recipes/accelerate_configs/zero2.yaml open_r1_sft.py --config recipes/red/redi_1_08_1e-6/config.yaml
+accelerate launch --config_file recipes/accelerate_configs/zero2.yaml open_r1_dpo.py --config recipes/redi/redi_1_08_1e-6/config.yaml
