@@ -3,37 +3,49 @@
 # Reinforcement Distillation
 
 <div>
-Learning from Off-policy Negative Data 🌟
 </div>
 </div>
 <div>
-<br>
 
 <div align="center">
 
-[![Github](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white
-)](https://github.com/Tim-Siu/reinforcement-distillation)
-[![Notion](https://img.shields.io/badge/Notion-000000?style=for-the-badge&logo=notion&logoColor=white
-)](https://shuyaoxu.notion.site/redi)
+> **Harnessing Negative Signals:<br> Reinforcement Distillation from Teacher Data for LLM Reasoning**<br>
+> [Shuyao Xu](https://tim-siu.github.io/), Cheng Peng, Jiangxuan Long, [Weidi Xu](https://wead-hsu.github.io/), [Wei Chu](https://weichu.github.io/), [Yuan Qi](https://ai3.fudan.edu.cn/info/1088/1494.htm)<br>
 
+[![arxiv](https://img.shields.io/badge/arXiv-2505.24850-b31b1b?style=for-the-badge&logo=arxiv&logoColor=white)](https://arxiv.org/abs/2505.24850)
+[![Github](https://img.shields.io/badge/GitHub-100000?style=for-the-badge&logo=github&logoColor=white)](https://github.com/Tim-Siu/reinforcement-distillation)
+[![Notion](https://img.shields.io/badge/Notion-000000?style=for-the-badge&logo=notion&logoColor=white)](https://shuyaoxu.notion.site/redi)
 </div>
 
+<div align="center">
+<img src="figures/redi_teaser.png" width="80%" />
 </div>
 
 ## Overview
-We propose **Reinforcement Distillation (REDI)**, an efficient approach for large language models (LLMs) post-training using offline RL and distilled data. Our **`REDI-1.5B-Preview`** model, fine-tuned from **`Qwen2.5-Math-1.5B`** using a curated 78k subset of the OpenR1 dataset (leveraging both positive and negative examples), achieves **83.1% on MATH-500 (pass@1)**. It performs comparably to or better than DeepSeek-R1-Distill-Qwen-1.5B on several math benchmarks, establishing a new state-of-the-art for 1.5B models fine-tuned offline using openly available distilled data.
+Recent advances in model distillation demonstrate that data from advanced reasoning models (e.g., DeepSeek-R1, OpenAI's o1) can effectively transfer complex reasoning abilities to smaller, efficient student models. However, standard practices employ rejection sampling, discarding incorrect reasoning examples---valuable, yet often underutilized data. This paper addresses the critical question: 
 
-A key finding is that **asymmetric weighting** of positive and negative sample gradients during optimization significantly enhances training stability and performance, allowing us to surpass DPO/SimPO without KL regularization.
+*How can both positive and negative distilled reasoning traces be effectively leveraged to maximize LLM reasoning performance in an offline setting?*
 
+ To this end, We propose **Re**inforcement **Di**stillation (**REDI**), a two-stage framework. Checkout our [paper](full_paper.pdf) for details on our methods.
 
-<div align="center">
-<img src="figures/redi_comparison.svg" width="80%" />
+ Notably, the **Qwen-REDI-1.5B** model, post-trained on just 131k positive and negative examples from the open Open-R1 dataset, achieves an 83.1% score on MATH-500 (pass@1). Its performance matches or surpasses that of DeepSeek-R1-Distill-Qwen-1.5 (a model post-trained on 800k proprietary data) across various mathematical reasoning benchmarks, establishing a **new state-of-the-art for 1.5B models post-trained offline with openly available data**.
 
-<sub>*For more details, see our [blog post](https://shuyaoxu.notion.site/redi).*</sub>
-</div>
+## Evaluation Results
+
+**Model Performance Comparison (pass@1 over 16 samples) across reasoning benchmarks.** ^*Officially reported pass@1 results. Results for `Qwen2.5-Math-1.5B` are from [EMPO](https://arxiv.org/html/2504.05812v1).
+
+| Model                               | MATH-500        | AIME24          | AMC23           | Minerva         | OlympiadBench   | Avg.            |
+| :---------------------------------- | :-------------: | :-------------: | :-------------: | :-------------: | :-------------: | :-------------: |
+| `Qwen2.5-Math-1.5B (Base)`                 | 52.2            | 10.0            | 42.5            | 10.7            | 25.2            | 28.1            |
+| `Qwen-SFT-1.5B-5ep (SFT)`  | 80.4       | 21.9       | 57.5       | 27.5       | 41.5       | 45.8       |
+| **`Qwen-REDI-1.5B (Ours)`**                | 83.1       | 28.1       | **62.4**   | 28.8       | **45.2**   | **49.5**   |
+| ---                                 | ---             | ---             | ---             | ---             | ---             | ---             |
+| `Qwen2.5-Math-1.5B-Instruct`^*      | 75.8            | 10.0            | 60.0            | **29.4**        | 38.1            | 42.7            |
+| `DeepSeek-R1-Distill-Qwen-1.5B`     | **83.2**   | **28.3**   | 62.1       | 26.0       | 43.1       | 48.6       |
 
 
 ## News
+- **[2025/05/31]** Our paper is out! Check it out on [arXiv](https://arxiv.org/abs/2505.24850).
 - **[2025/04/30]** ⬆️ An In-Depth Blog Post on our [Training Recipe and Insights](https://shuyaoxu.notion.site/redi)
 - **[2025/04/30]** REDI codebase is released. Try it out!
 
@@ -152,13 +164,6 @@ You may first follow instructions on [rllm project](rllm/README.md) to install a
   
 </details>
 
-| Model             | AIME24 | AMC23 | MATH500 | Minerva | Olympiad Bench | Avg. |
-|-------------------|------|-------|--------|------------|----------------|------|
-| Deepseek-R1-Distill-Qwen-1.5b | 28.3 | 62.1  | 83.2   | 26.0       | 43.1           | 48.5 |
-| SimpleRL-Zero     | 4.2  | 35.0  | 59.0   | 20.2       | 21.0           | 27.9 |
-| LUFFY             | 15.2 | 46.8  | 79.4   | 26.5       | 42.4           | 42.1 |
-| REDI-SFT-1.5B      | 24.0 | 57.3  | 80.4   | 27.6       | 41.1           | 47.0 |
-| REDI-1.5B-Preview  | 28.1 | 62.4  | 83.1   | 28.8       | 45.2           | 49.5 |
 
 ## Acknowledgements
 
@@ -169,13 +174,13 @@ We thank **Hugging Face** for the Open R1 dataset and libraries like `transforme
 If you find REDI useful in your research, please consider citing our work using the following BibTeX entry:
 
 ```bibtex
-@misc{xu2025redi,
-  author       = {Xu, Shuyao and Peng, Cheng and Long, Jiangxuan and Xu, Weidi},
-  title        = {Reinforcement Distillation: Learning from Off-policy Negative Data},
-  year         = {2025},
-  month        = {April},
-  howpublished = {Blog Post / Technical Report},
-  url          = {https://shuyaoxu.notion.site/redi},
-  note         = {Code available at \url{https://github.com/Tim-Siu/reinforcement-distillation}}
+@misc{xu2025harnessingnegativesignalsreinforcement,
+      title={Harnessing Negative Signals: Reinforcement Distillation from Teacher Data for LLM Reasoning}, 
+      author={Shuyao Xu and Cheng Peng and Jiangxuan Long and Weidi Xu and Wei Chu and Yuan Qi},
+      year={2025},
+      eprint={2505.24850},
+      archivePrefix={arXiv},
+      primaryClass={cs.LG},
+      url={https://arxiv.org/abs/2505.24850}, 
 }
 ```
