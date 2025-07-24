@@ -302,6 +302,35 @@ print(f"- From Group 1 (correct): {len(group1_problems)}")
 print(f"- From Group 2 (incorrect): {len(group2_problems)}")
 print(f"- From Type B (correct): {len(type_b_problems)}")
 
+# %% Helper functions for DPO preprocessing
+def extract_prompt_and_responses(chosen_msgs, rejected_msgs):
+    """Extracts implicit prompt and separates responses from DPO messages."""
+    prompt_msgs = []
+    divergence_idx = 0
+    min_len = min(len(chosen_msgs), len(rejected_msgs))
+    for i in range(min_len):
+        if chosen_msgs[i].get('role') == rejected_msgs[i].get('role') and \
+           chosen_msgs[i].get('content') == rejected_msgs[i].get('content'):
+            divergence_idx = i + 1
+        else:
+            break
+    prompt_msgs = chosen_msgs[:divergence_idx]
+    actual_chosen = chosen_msgs[divergence_idx:]
+    actual_rejected = rejected_msgs[divergence_idx:]
+    return prompt_msgs, actual_chosen, actual_rejected
+
+def calculate_prompt_length(prompt_msgs):
+    """Calculate token length of prompt messages."""
+    if not prompt_msgs:
+        return 0
+    prompt_str = tokenizer.apply_chat_template(
+        prompt_msgs, add_generation_prompt=False, tokenize=False
+    )
+    prompt_tokens = tokenizer(prompt_str, add_special_tokens=False)['input_ids']
+    # Add 1 if last message role is not assistant (for generation prompt)
+    add_gen_prompt = 1 if prompt_msgs[-1].get("role") != 'assistant' else 0
+    return len(prompt_tokens) + add_gen_prompt
+
 # %% Create DPO Datasets with Length Filtering
 print(f"\n--- Creating DPO Datasets with Length Filtering (max {MAX_RESPONSE_LENGTH} tokens) ---")
 
@@ -314,20 +343,26 @@ for prob in group1_problems:
     correct_gen = prob["generations"][prob["landmv_correct_idx"]]
     incorrect_gen = prob["generations"][prob["landmv_incorrect_idx"]]
     
-    # Calculate lengths
-    correct_len = calculate_response_length(correct_gen)
-    incorrect_len = calculate_response_length(incorrect_gen)
+    # Create message lists
+    chosen = [
+        {"role": "user", "content": prob["problem"]},
+        {"role": "assistant", "content": correct_gen}
+    ]
+    rejected = [
+        {"role": "user", "content": prob["problem"]},
+        {"role": "assistant", "content": incorrect_gen}
+    ]
     
-    # Check length constraints
-    if correct_len <= MAX_RESPONSE_LENGTH and incorrect_len <= MAX_RESPONSE_LENGTH:
-        chosen = [
-            {"role": "user", "content": prob["problem"]},
-            {"role": "assistant", "content": correct_gen}
-        ]
-        rejected = [
-            {"role": "user", "content": prob["problem"]},
-            {"role": "assistant", "content": incorrect_gen}
-        ]
+    # Extract prompt and responses
+    prompt_msgs, chosen_response_msgs, rejected_response_msgs = extract_prompt_and_responses(chosen, rejected)
+    
+    # Calculate lengths
+    prompt_len = calculate_prompt_length(prompt_msgs)
+    chosen_len = calculate_response_length(correct_gen) + 1  # +1 for EOS token
+    rejected_len = calculate_response_length(incorrect_gen) + 1  # +1 for EOS token
+    
+    # Check length constraints on response lengths only
+    if chosen_len <= MAX_RESPONSE_LENGTH and rejected_len <= MAX_RESPONSE_LENGTH:
         dpo_entry = {
             "prompt": prob["problem"],
             "chosen": chosen,
@@ -337,8 +372,12 @@ for prob in group1_problems:
             "original_index": prob["original_index"],
             "chosen_gen_idx": prob["landmv_correct_idx"],
             "rejected_gen_idx": prob["landmv_incorrect_idx"],
-            "chosen_len": correct_len,
-            "rejected_len": incorrect_len,
+            "prompt_msgs": prompt_msgs,
+            "chosen_response_msgs": chosen_response_msgs,
+            "rejected_response_msgs": rejected_response_msgs,
+            "prompt_len": prompt_len,
+            "chosen_len": chosen_len,
+            "rejected_len": rejected_len,
             "group_assignment": 1,
             "dpo_type": "main"
         }
@@ -352,20 +391,26 @@ for prob in group2_problems:
     correct_gen = prob["generations"][prob["landmv_correct_idx"]]
     incorrect_gen = prob["generations"][prob["landmv_incorrect_idx"]]
     
-    # Calculate lengths
-    correct_len = calculate_response_length(correct_gen)
-    incorrect_len = calculate_response_length(incorrect_gen)
+    # Create message lists (note: incorrect is chosen, correct is rejected for ablation)
+    chosen = [
+        {"role": "user", "content": prob["problem"]},
+        {"role": "assistant", "content": incorrect_gen}
+    ]
+    rejected = [
+        {"role": "user", "content": prob["problem"]},
+        {"role": "assistant", "content": correct_gen}
+    ]
     
-    # Check length constraints
-    if correct_len <= MAX_RESPONSE_LENGTH and incorrect_len <= MAX_RESPONSE_LENGTH:
-        chosen = [
-            {"role": "user", "content": prob["problem"]},
-            {"role": "assistant", "content": incorrect_gen}
-        ]
-        rejected = [
-            {"role": "user", "content": prob["problem"]},
-            {"role": "assistant", "content": correct_gen}
-        ]
+    # Extract prompt and responses
+    prompt_msgs, chosen_response_msgs, rejected_response_msgs = extract_prompt_and_responses(chosen, rejected)
+    
+    # Calculate lengths
+    prompt_len = calculate_prompt_length(prompt_msgs)
+    chosen_len = calculate_response_length(incorrect_gen) + 1  # +1 for EOS token
+    rejected_len = calculate_response_length(correct_gen) + 1  # +1 for EOS token
+    
+    # Check length constraints on response lengths only
+    if chosen_len <= MAX_RESPONSE_LENGTH and rejected_len <= MAX_RESPONSE_LENGTH:
         dpo_entry = {
             "prompt": prob["problem"],
             "chosen": chosen,
@@ -375,8 +420,12 @@ for prob in group2_problems:
             "original_index": prob["original_index"],
             "chosen_gen_idx": prob["landmv_incorrect_idx"],
             "rejected_gen_idx": prob["landmv_correct_idx"],
-            "chosen_len": incorrect_len,
-            "rejected_len": correct_len,
+            "prompt_msgs": prompt_msgs,
+            "chosen_response_msgs": chosen_response_msgs,
+            "rejected_response_msgs": rejected_response_msgs,
+            "prompt_len": prompt_len,
+            "chosen_len": chosen_len,
+            "rejected_len": rejected_len,
             "group_assignment": 2,
             "dpo_type": "ablation"
         }
