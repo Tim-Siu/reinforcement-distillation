@@ -76,7 +76,7 @@ except Exception as e:
     raise e
 
 # %% Helper Functions
-def save_hf_dataset_from_list(data_list, output_dir, dataset_name):
+def save_hf_dataset_from_list(data_list, output_dir, dataset_name, force_multiple_shards=False):
     """Converts a list of dicts to a Dataset and saves it under the 'train' split."""
     if not data_list:
         print(f"Warning: Empty list provided for {dataset_name}. Skipping save.")
@@ -89,8 +89,18 @@ def save_hf_dataset_from_list(data_list, output_dir, dataset_name):
     try:
         dataset_obj = Dataset.from_list(data_list)
         dataset_dict = DatasetDict({"train": dataset_obj})
-        dataset_dict.save_to_disk(full_output_path)
-        print(f"Dataset {dataset_name} saved to: {full_output_path}")
+        
+        if force_multiple_shards:
+            # Force multiple shards to work around HuggingFace bug
+            # https://github.com/huggingface/datasets/issues/6823
+            # Set max_shard_size to force at least 2 shards
+            shard_size = "100MB"  # This should create multiple shards for most datasets
+            dataset_dict.save_to_disk(full_output_path, max_shard_size=shard_size)
+            print(f"Dataset {dataset_name} saved to: {full_output_path} with multiple shards")
+        else:
+            dataset_dict.save_to_disk(full_output_path)
+            print(f"Dataset {dataset_name} saved to: {full_output_path}")
+        
         return full_output_path
     except Exception as e:
         print(f"Error converting list to Dataset or saving for {dataset_name}: {e}")
@@ -460,29 +470,32 @@ else:
 # %% Save All Datasets
 print("\n--- Saving Datasets ---")
 
-# Save SFT dataset
+# Save SFT dataset (normal save, no multiple shards)
 save_hf_dataset_from_list(
     sft_data,
     output_base_dir,
-    "openr1_math_sft_mixed_ablation"
+    "openr1_math_sft_mixed_ablation",
+    force_multiple_shards=False
 )
 del sft_data
 gc.collect()
 
-# Save Main DPO dataset
+# Save Main DPO dataset (force multiple shards to avoid HuggingFace bug)
 save_hf_dataset_from_list(
     main_dpo_data,
     output_base_dir,
-    "openr1_math_dpo_main_ablation"
+    "openr1_math_dpo_main_ablation",
+    force_multiple_shards=True
 )
 del main_dpo_data
 gc.collect()
 
-# Save Ablation DPO dataset
+# Save Ablation DPO dataset (force multiple shards to avoid HuggingFace bug)
 save_hf_dataset_from_list(
     ablation_dpo_data,
     output_base_dir,
-    "openr1_math_dpo_inverted_ablation"
+    "openr1_math_dpo_inverted_ablation",
+    force_multiple_shards=True
 )
 del ablation_dpo_data
 gc.collect()
